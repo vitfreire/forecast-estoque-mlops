@@ -1,0 +1,53 @@
+{
+  "model_name": "lgbm_walmart_cost",
+  "feature_names": [
+    "Store",
+    "Dept",
+    "Temperature",
+    "Fuel_Price",
+    "MarkDown1",
+    "MarkDown2",
+    "MarkDown3",
+    "MarkDown4",
+    "MarkDown5",
+    "CPI",
+    "Unemployment",
+    "Type",
+    "Size",
+    "IsHoliday",
+    "year",
+    "month",
+    "weekofyear",
+    "dayofweek",
+    "is_month_start",
+    "is_month_end",
+    "lag_1",
+    "lag_2",
+    "lag_3",
+    "lag_4",
+    "roll_mean_4",
+    "roll_std_4",
+    "roll_mean_8",
+    "roll_std_8",
+    "roll_mean_12",
+    "roll_std_12",
+    "Date_year",
+    "Date_month",
+    "Date_week",
+    "Date_day",
+    "Date_dow",
+    "Date_dayofyear",
+    "Date_ts"
+  ],
+  "cat_cols": [
+    "Type"
+  ],
+  "cat_mapping": {
+    "Type": [
+      "A",
+      "B",
+      "C",
+      "missing"
+    ]
+  }
+}
