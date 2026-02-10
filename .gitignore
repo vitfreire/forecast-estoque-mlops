@@ -1,0 +1,29 @@
+# Ambiente
+.venv/
+__pycache__/
+*.pyc
+
+# MLflow
+mlruns/
+mlartifacts/
+mlflow.db
+
+# Variáveis sensíveis
+.env
+
+# Dados locais
+data/
+artifacts/
+
+# Streamlit
+.streamlit/
+
+# Prefect local
+.prefect/
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

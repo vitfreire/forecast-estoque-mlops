@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forecast_estoque_mlops"
+version = "0.1.0"
+description = "Forecast + Estoque + MLOps"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
