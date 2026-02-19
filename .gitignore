@@ -1,29 +1,50 @@
-# Ambiente
-.venv/
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
-# MLflow
-mlruns/
-mlartifacts/
-mlflow.db
+# Virtualenv
+.venv/
+venv/
 
-# Variáveis sensíveis
-.env
-
-# Dados locais
-data/
-artifacts/
-
-# Streamlit
-.streamlit/
-
-# Prefect local
-.prefect/
-
-# VSCode
+# IDE
 .vscode/
+.idea/
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Dados e artefatos gerados
+data/processed/
+data/interim/
+data/output/
+*.parquet
+*.csv
+*.pkl
+*.joblib
+
+# Artefatos do pipeline (se forem gerados automaticamente)
+artifacts/*.json
+artifacts/*.txt
+
+# Logs
+*.log
+
+# Build / packaging
+*.egg-info/
+dist/
+build/
+
+# Relatórios gerados
+reports/
+forecast/reports/
+
+#MLflow
+
+mlruns/
+mlartifacts/
+mlflow.db
+.env
+artifacts/

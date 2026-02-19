@@ -1,294 +1,339 @@
+from __future__ import annotations
+
 import os
-import json
-from datetime import datetime
-from typing import Dict, Any, Tuple, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
-import mlflow
-import mlflow.lightgbm
-from mlflow.tracking import MlflowClient
 
-from prefect import flow, task
-from dotenv import load_dotenv
+from prefect import flow, task, get_run_logger
 
-from src.config import settings
-from src.io import read_raw, write_parquet, read_parquet, ensure_dir
-from src.features import merge_walmart, add_time_features, add_lag_features, finalize_features
-from src.split import temporal_split
-from src.baseline import seasonal_naive_week
-from src.metrics import mae, rmse, mape
-from src.cost import cost_error
-from src.train_lgbm import train_lgbm
-from src.predict import predict
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.model_selection import train_test_split
 
+# Modelos (carrega se existir no ambiente)
+try:
+    from lightgbm import LGBMRegressor
+except Exception:
+    LGBMRegressor = None
 
-# =========================
-# CONFIG
-# =========================
-EXPERIMENT_NAME = os.getenv(
-    "MLFLOW_EXPERIMENT_NAME", "forecast_estoque_walmart")
-REGISTERED_MODEL_NAME = os.getenv(
-    "MLFLOW_REGISTERED_MODEL_NAME", "walmart_forecast_lgbm_cost")
-ARTIFACTS_DIR = os.getenv("MLFLOW_ARTIFACTS_DIR", "artifacts")
-MODEL_NAME_LOCAL = "lgbm_walmart_cost"
+try:
+    from xgboost import XGBRegressor
+except Exception:
+    XGBRegressor = None
+
+try:
+    from sklearn.ensemble import RandomForestRegressor
+except Exception:
+    RandomForestRegressor = None
 
 
-# =========================
-# HELPERS
-# =========================
-def should_promote_to_staging(baseline_cost: float, model_cost: float) -> bool:
-    return float(model_cost) < float(baseline_cost)
+# -----------------------------
+# Utils de caminho / IO
+# -----------------------------
+def project_root() -> str:
+    # flows/prefect_flow.py -> volta 1 nível (flows) e mais 1 (raiz)
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _safe_end_active_run():
-    if mlflow.active_run() is not None:
-        mlflow.end_run()
+def data_path(*parts: str) -> str:
+    return os.path.join(project_root(), "data", *parts)
 
 
-def _log_dict(prefix: str, d: Dict[str, Any]):
-    for k, v in d.items():
-        try:
-            mlflow.log_metric(f"{prefix}{k}", float(v))
-        except Exception:
-            pass
+def ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
 
 
-# =========================
-# DRIFT REFERENCE
-# =========================
-def build_drift_reference(X_ref: pd.DataFrame, feature_names: list, cat_cols: list) -> Dict[str, Any]:
+# -----------------------------
+# Métricas
+# -----------------------------
+def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
-    ref = {
-        "created_at_utc": datetime.utcnow().isoformat(),
-        "n_rows": int(len(X_ref)),
-        "feature_names": feature_names,
-        "cat_cols": cat_cols,
-        "features": {}
-    }
 
-    for col in feature_names:
+def mape(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1e-9) -> float:
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    denom = np.maximum(np.abs(y_true), eps)
+    return float(np.mean(np.abs((y_true - y_pred) / denom)) * 100.0)
 
-        s = X_ref[col] if col in X_ref.columns else pd.Series(
-            [pd.NA] * len(X_ref))
-        missing_rate = float(pd.isna(s).mean())
 
-        if col in cat_cols:
-            vc = s.astype("string").fillna(
-                "__MISSING__").value_counts(normalize=True)
-            ref["features"][col] = {
-                "type": "categorical",
-                "missing_rate": missing_rate,
-                "top_values": vc.head(30).to_dict()
-            }
+def smape(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1e-9) -> float:
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    denom = np.maximum(np.abs(y_true) + np.abs(y_pred), eps)
+    return float(np.mean(2.0 * np.abs(y_pred - y_true) / denom) * 100.0)
+
+
+# -----------------------------
+# Config
+# -----------------------------
+@dataclass
+class DatasetConfig:
+    raw_dir: str = "raw"
+    processed_dir: str = "processed"
+    train_file: str = "train.csv"
+    features_file: str = "features.csv"
+    stores_file: str = "stores.csv"
+    target_col: str = "Weekly_Sales"
+    date_col: str = "Date"
+    store_col: str = "Store"
+    dept_col: str = "Dept"
+    holiday_col: str = "IsHoliday"
+    # split temporal: % final para validação
+    valid_frac: float = 0.2
+
+
+@dataclass
+class TrainConfig:
+    random_state: int = 42
+
+
+# -----------------------------
+# Tasks
+# -----------------------------
+@task
+def build_dataset(cfg: DatasetConfig) -> pd.DataFrame:
+    logger = get_run_logger()
+
+    train_path = data_path(cfg.raw_dir, cfg.train_file)
+    feat_path = data_path(cfg.raw_dir, cfg.features_file)
+    stores_path = data_path(cfg.raw_dir, cfg.stores_file)
+
+    # valida presença
+    missing = [p for p in [train_path, feat_path,
+                           stores_path] if not os.path.exists(p)]
+    if missing:
+        raise FileNotFoundError(
+            "Arquivos não encontrados:\n" + "\n".join(missing) +
+            "\n\nEsperado em: data/raw/{train.csv, features.csv, stores.csv}"
+        )
+
+    df_train = pd.read_csv(train_path)
+    df_feat = pd.read_csv(feat_path)
+    df_stores = pd.read_csv(stores_path)
+
+    # normaliza Date
+    for df in (df_train, df_feat):
+        if cfg.date_col in df.columns:
+            df[cfg.date_col] = pd.to_datetime(
+                df[cfg.date_col], errors="coerce")
+
+    # merge train + features
+    # Alguns datasets têm IsHoliday em ambos; usamos join robusto.
+    merge_keys = [cfg.store_col, cfg.date_col]
+    if cfg.holiday_col in df_train.columns and cfg.holiday_col in df_feat.columns:
+        merge_keys.append(cfg.holiday_col)
+
+    df = df_train.merge(df_feat, on=merge_keys, how="left")
+
+    # merge stores (Store é a chave)
+    if cfg.store_col in df_stores.columns:
+        df = df.merge(df_stores, on=cfg.store_col, how="left")
+    else:
+        logger.warning("stores.csv não tem coluna 'Store'. Merge ignorado.")
+
+    # valida target
+    if cfg.target_col not in df.columns:
+        raise ValueError(
+            f"Coluna target '{cfg.target_col}' não encontrada no train.csv.")
+
+    # remove linhas sem Date/target
+    df = df.dropna(subset=[cfg.date_col, cfg.target_col]).copy()
+
+    # features temporais
+    dt = df[cfg.date_col]
+    df["year"] = dt.dt.year.astype("int32")
+    df["month"] = dt.dt.month.astype("int8")
+    df["day"] = dt.dt.day.astype("int8")
+    df["dayofweek"] = dt.dt.dayofweek.astype("int8")
+    df["weekofyear"] = dt.dt.isocalendar().week.astype("int16")
+
+    # drop Date (evita dtype datetime nos modelos)
+    df = df.drop(columns=[cfg.date_col])
+
+    # Tipos: garante numérico onde faz sentido
+    # Mantém bool/categ como int (modelos lidam melhor assim sem encoding pesado)
+    for col in df.columns:
+        if col == cfg.target_col:
+            continue
+        if df[col].dtype == "bool":
+            df[col] = df[col].astype("int8")
+
+    # Converte objetos para categoria ou numérico quando possível
+    obj_cols = df.select_dtypes(include=["object"]).columns.tolist()
+    for col in obj_cols:
+        # tenta numérico
+        coerced = pd.to_numeric(df[col], errors="coerce")
+        if coerced.notna().mean() > 0.95:
+            df[col] = coerced
         else:
-            s_num = pd.to_numeric(s, errors="coerce").dropna()
-            if len(s_num) == 0:
-                continue
+            df[col] = df[col].astype("category")
 
-            counts, bins = pd.cut(
-                s_num, bins=10, retbins=True, include_lowest=True)
-            hist_counts = counts.value_counts(
-                sort=False).astype("int64").tolist()
-
-            ref["features"][col] = {
-                "type": "numeric",
-                "missing_rate": missing_rate,
-                "stats": {
-                    "mean": float(s_num.mean()),
-                    "std": float(s_num.std()),
-                    "min": float(s_num.min()),
-                    "max": float(s_num.max())
-                },
-                "hist": {
-                    "bins": [float(b) for b in bins.tolist()],
-                    "counts": hist_counts
-                }
-            }
-
-    return ref
+    logger.info(f"Dataset final: shape={df.shape}")
+    return df
 
 
 @task
-def build_and_log_drift_reference(dataset_path: str, cutoff: str):
+def split_dataset(cfg: DatasetConfig, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Split temporal: ordena por year/month/week/day (criados) e pega o final como validação.
+    Evita vazamento em séries temporais.
+    """
+    logger = get_run_logger()
 
-    preprocess_path = os.path.join(
-        ARTIFACTS_DIR, f"{MODEL_NAME_LOCAL}_preprocess.json")
+    sort_cols = [c for c in ["year", "month",
+                             "weekofyear", "day"] if c in df.columns]
+    df_sorted = df.sort_values(sort_cols).reset_index(drop=True)
 
-    if not os.path.exists(preprocess_path):
-        mlflow.set_tag("drift_reference", "not_created")
-        return None
+    n = len(df_sorted)
+    n_valid = int(np.ceil(n * cfg.valid_frac))
+    n_train = n - n_valid
 
-    with open(preprocess_path, "r", encoding="utf-8") as f:
-        pre = json.load(f)
+    train_df = df_sorted.iloc[:n_train].copy()
+    valid_df = df_sorted.iloc[n_train:].copy()
 
-    feature_names = pre["feature_names"]
-    cat_cols = pre.get("cat_cols", [])
-
-    df = read_parquet(dataset_path)
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-
-    cutoff_dt = pd.to_datetime(cutoff)
-    ref_df = df[df["Date"] <= cutoff_dt].copy()
-
-    X_ref = ref_df.drop(columns=["Weekly_Sales"], errors="ignore")
-
-    missing_cols = [c for c in feature_names if c not in X_ref.columns]
-    for c in missing_cols:
-        X_ref[c] = pd.NA
-
-    X_ref = X_ref[feature_names]
-
-    ref = build_drift_reference(X_ref, feature_names, cat_cols)
-
-    ensure_dir(ARTIFACTS_DIR)
-    path = os.path.join(ARTIFACTS_DIR, "drift_reference.json")
-
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(ref, f, indent=2)
-
-    mlflow.log_artifact(path, artifact_path="monitoring")
-
-    return path
+    logger.info(
+        f"Split temporal: train={train_df.shape}, valid={valid_df.shape}")
+    return train_df, valid_df
 
 
-# =========================
-# TASKS
-# =========================
-@task
-def build_dataset():
-    raw = read_raw(settings.DATA_RAW_DIR)
+def make_X_y(cfg: DatasetConfig, df: pd.DataFrame) -> Tuple[pd.DataFrame, np.ndarray]:
+    y = df[cfg.target_col].values
+    X = df.drop(columns=[cfg.target_col]).copy()
 
-    df = merge_walmart(raw["train"], raw["features"], raw["stores"])
-    df = add_time_features(df)
-    df = add_lag_features(df, ["Store", "Dept"], "Weekly_Sales")
-    df = finalize_features(df)
+    # One-hot para categorias (leve e robusto)
+    cat_cols = X.select_dtypes(include=["category"]).columns.tolist()
+    if cat_cols:
+        X = pd.get_dummies(X, columns=cat_cols, drop_first=False)
 
-    ensure_dir(settings.DATA_PROCESSED_DIR)
-    path = os.path.join(settings.DATA_PROCESSED_DIR, "dataset.parquet")
-    write_parquet(df, path)
+    # garante numérico puro
+    X = X.apply(pd.to_numeric, errors="coerce").fillna(0.0)
 
-    return path
+    return X, y
 
 
 @task
-def split_dataset(path):
-    df = read_parquet(path)
-    train_df, valid_df, cutoff = temporal_split(
-        df, "Date", settings.HORIZON_DAYS)
-    return train_df, valid_df, str(cutoff.date())
+def train_and_compare(cfg: DatasetConfig, tcfg: TrainConfig, train_df: pd.DataFrame, valid_df: pd.DataFrame) -> pd.DataFrame:
+    logger = get_run_logger()
+
+    X_train, y_train = make_X_y(cfg, train_df)
+    X_valid, y_valid = make_X_y(cfg, valid_df)
+
+    # alinha colunas (caso dummies difiram entre train/valid)
+    X_valid = X_valid.reindex(columns=X_train.columns, fill_value=0.0)
+
+    results: List[Dict] = []
+
+    # 1) LightGBM
+    if LGBMRegressor is not None:
+        model = LGBMRegressor(
+            n_estimators=1500,
+            learning_rate=0.03,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=tcfg.random_state,
+            n_jobs=-1,
+        )
+        model.fit(X_train, y_train)
+        pred = model.predict(X_valid)
+
+        results.append({
+            "model": "lightgbm",
+            "mae": float(mean_absolute_error(y_valid, pred)),
+            "rmse": rmse(y_valid, pred),
+            "mape": mape(y_valid, pred),
+            "smape": smape(y_valid, pred),
+        })
+    else:
+        logger.warning(
+            "LightGBM não disponível no ambiente (pip install lightgbm).")
+
+    # 2) XGBoost
+    if XGBRegressor is not None:
+        model = XGBRegressor(
+            n_estimators=1200,
+            learning_rate=0.03,
+            max_depth=8,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_lambda=1.0,
+            random_state=tcfg.random_state,
+            n_jobs=-1,
+        )
+        model.fit(X_train, y_train)
+        pred = model.predict(X_valid)
+
+        results.append({
+            "model": "xgboost",
+            "mae": float(mean_absolute_error(y_valid, pred)),
+            "rmse": rmse(y_valid, pred),
+            "mape": mape(y_valid, pred),
+            "smape": smape(y_valid, pred),
+        })
+    else:
+        logger.warning(
+            "XGBoost não disponível no ambiente (pip install xgboost).")
+
+    # 3) RandomForest (baseline)
+    if RandomForestRegressor is not None:
+        model = RandomForestRegressor(
+            n_estimators=300,
+            random_state=tcfg.random_state,
+            n_jobs=-1,
+            max_depth=None,
+        )
+        model.fit(X_train, y_train)
+        pred = model.predict(X_valid)
+
+        results.append({
+            "model": "random_forest",
+            "mae": float(mean_absolute_error(y_valid, pred)),
+            "rmse": rmse(y_valid, pred),
+            "mape": mape(y_valid, pred),
+            "smape": smape(y_valid, pred),
+        })
+    else:
+        logger.warning(
+            "RandomForest não disponível (estranho; vem no scikit-learn).")
+
+    if not results:
+        raise RuntimeError(
+            "Nenhum modelo foi treinado. Verifique dependências do ambiente.")
+
+    leaderboard = pd.DataFrame(results).sort_values(
+        ["rmse", "mae"], ascending=True).reset_index(drop=True)
+    logger.info("Leaderboard:\n" + leaderboard.to_string(index=False))
+    return leaderboard
 
 
 @task
-def eval_baseline(train_df, valid_df):
+def persist_processed(cfg: DatasetConfig, train_df: pd.DataFrame, valid_df: pd.DataFrame) -> None:
+    out_dir = data_path(cfg.processed_dir)
+    ensure_dir(out_dir)
 
-    y_true = valid_df["Weekly_Sales"].values
-    y_pred = seasonal_naive_week(train_df, valid_df)
+    train_out = os.path.join(out_dir, "train.parquet")
+    valid_out = os.path.join(out_dir, "valid.parquet")
 
-    return {
-        "mae": mae(y_true, y_pred),
-        "rmse": rmse(y_true, y_pred),
-        "mape": mape(y_true, y_pred),
-        "cost_total": cost_error(y_true, y_pred, settings.COST_UNDER, settings.COST_OVER)
-    }
+    train_df.to_parquet(train_out, index=False)
+    valid_df.to_parquet(valid_out, index=False)
 
 
-@task
-def train_model(train_df, valid_df):
-    return train_lgbm(train_df, valid_df, model_name=MODEL_NAME_LOCAL)
-
-
-@task
-def eval_model(model, valid_df):
-
-    pred_df = predict(model, valid_df, MODEL_NAME_LOCAL)
-
-    ensure_dir(settings.REPORTS_DIR)
-    path = os.path.join(settings.REPORTS_DIR, "valid_predictions.parquet")
-    pred_df.to_parquet(path, index=False)
-
-    y_true = pred_df["Weekly_Sales"].values
-    y_pred = pred_df["y_pred"].values
-
-    metrics = {
-        "mae": mae(y_true, y_pred),
-        "rmse": rmse(y_true, y_pred),
-        "mape": mape(y_true, y_pred),
-        "cost_total": cost_error(y_true, y_pred, settings.COST_UNDER, settings.COST_OVER)
-    }
-
-    return metrics, path
-
-
-@task
-def register_model(model):
-
-    mlflow.lightgbm.log_model(
-        model,
-        artifact_path="model",
-        registered_model_name=REGISTERED_MODEL_NAME
-    )
-
-    client = MlflowClient()
-    run_id = mlflow.active_run().info.run_id
-
-    for mv in client.search_model_versions(f"name='{REGISTERED_MODEL_NAME}'"):
-        if mv.run_id == run_id:
-            return int(mv.version)
-
-    raise RuntimeError("Model version not found.")
-
-
-# =========================
-# FLOW
-# =========================
+# -----------------------------
+# Flow
+# -----------------------------
 @flow(name="forecast_estoque_walmart_flow")
 def main():
+    cfg = DatasetConfig()
+    tcfg = TrainConfig()
 
-    load_dotenv()
-    _safe_end_active_run()
+    df = build_dataset(cfg)
+    train_df, valid_df = split_dataset(cfg, df)
+    persist_processed(cfg, train_df, valid_df)
+    leaderboard = train_and_compare(cfg, tcfg, train_df, valid_df)
 
-    exp = mlflow.set_experiment(EXPERIMENT_NAME)
-
-    with mlflow.start_run(run_name=f"prefect_{datetime.now().strftime('%Y%m%d_%H%M%S')}", experiment_id=exp.experiment_id) as run:
-
-        mlflow.set_tag("pipeline", "forecast")
-        mlflow.log_param("horizon_days", settings.HORIZON_DAYS)
-
-        dataset_path = build_dataset()
-        train_df, valid_df, cutoff = split_dataset(dataset_path)
-
-        mlflow.log_artifact(dataset_path, artifact_path="data")
-
-        baseline_metrics = eval_baseline(train_df, valid_df)
-        _log_dict("baseline_", baseline_metrics)
-
-        model = train_model(train_df, valid_df)
-
-        model_metrics, pred_path = eval_model(model, valid_df)
-        _log_dict("model_", model_metrics)
-
-        mlflow.log_artifact(pred_path, artifact_path="reports")
-
-        drift_path = build_and_log_drift_reference(dataset_path, cutoff)
-
-        version = register_model(model)
-
-        if should_promote_to_staging(baseline_metrics["cost_total"], model_metrics["cost_total"]):
-            client = MlflowClient()
-            client.transition_model_version_stage(
-                REGISTERED_MODEL_NAME,
-                str(version),
-                "Staging",
-                archive_existing_versions=True
-            )
-
-        print("RUN_ID:", run.info.run_id)
-
-        return {
-            "run_id": run.info.run_id,
-            "model_version": version,
-            "drift_reference": drift_path
-        }
+    return leaderboard
 
 
 if __name__ == "__main__":
