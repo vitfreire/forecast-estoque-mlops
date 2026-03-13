@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forecast_estoque_mlops"
+version = "0.1.0"
+description = "Forecast de demanda + gestão de estoque com MLOps — dataset Walmart"
+readme = "README.md"
+requires-python = ">=3.10"
+
+# Dependências diretas (sem versões transitivias — use requirements.lock.txt para reprodução exata)
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "lightgbm>=4.3",
+    "xgboost>=2.0",
+    "scikit-learn>=1.4",
+    "mlflow>=2.11",
+    "prefect>=2.16",
+    "streamlit>=1.33",
+    "plotly>=5.0",
+    "python-dotenv>=1.0",
+    "pydantic>=2.6",
+    "pyarrow>=15.0",
+    "joblib>=1.4",
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "flows*", "dashboard*"]
+
+# --- Linting e formatação ---
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]   # pycodestyle + pyflakes + isort
+ignore = ["E501"]               # line-length é controlado acima
+
+# --- Testes ---
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

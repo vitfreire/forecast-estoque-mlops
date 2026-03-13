@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtualenv
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dados (raw e processados nunca vão pro git — use DVC ou Kaggle API para reprodução)
+data/
+*.parquet
+*.pkl
+*.joblib
+
+# Artefatos do pipeline (se forem gerados automaticamente)
+artifacts/*.json
+artifacts/*.txt
+
+# Logs
+*.log
+
+# Build / packaging
+*.egg-info/
+dist/
+build/
+
+# Relatórios gerados
+reports/
+forecast/reports/
+
+#MLflow
+
+mlruns/
+mlartifacts/
+mlflow.db
+.env
+artifacts/
