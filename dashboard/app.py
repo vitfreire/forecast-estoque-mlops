@@ -1510,8 +1510,61 @@ with tabs[6]:
                     st.info("Runs filhos não encontrados para este experimento.")
 
     except Exception as _e:
-        st.error(f"Erro ao conectar ao MLflow: {_e}")
-        st.caption("Verifique o Tracking URI na barra lateral e se o pipeline de treinamento foi executado.")
+        # Fallback: lê leaderboard.csv gerado no treinamento
+        _lb_csv = primeiro_arquivo_existente([
+            "artifacts/reports/leaderboard.csv",
+            "../artifacts/reports/leaderboard.csv",
+        ])
+        if _lb_csv:
+            _lb_fallback = pd.read_csv(_lb_csv)
+            _col_map = {"model": "Modelo", "rmse": "RMSE", "mae": "MAE", "smape": "SMAPE (%)"}
+            _lb_fallback = _lb_fallback.rename(columns={k: v for k, v in _col_map.items() if k in _lb_fallback.columns})
+            if "train_seconds" in _lb_fallback.columns:
+                _lb_fallback["Treino (s)"] = _lb_fallback["train_seconds"].round(1)
+            _display_cols = [c for c in ["Modelo", "RMSE", "MAE", "SMAPE (%)", "Treino (s)"] if c in _lb_fallback.columns]
+            _lb_fallback = _lb_fallback[_display_cols].sort_values("RMSE").reset_index(drop=True)
+
+            st.info("MLflow indisponível — exibindo leaderboard salvo no último treinamento.")
+            st.dataframe(_lb_fallback, use_container_width=True)
+
+            if not _lb_fallback.empty:
+                _best = _lb_fallback.iloc[0]
+                _l1, _l2, _l3 = st.columns(3)
+                with _l1:
+                    _fig_r = px.bar(_lb_fallback.sort_values("RMSE"), x="Modelo", y="RMSE",
+                                    color="Modelo", color_discrete_sequence=_CORES_MODELOS, title="RMSE por modelo")
+                    _fig_r.update_layout(height=320, showlegend=False,
+                                         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)")
+                    st.plotly_chart(_fig_r, use_container_width=True)
+                if "MAE" in _lb_fallback.columns:
+                    with _l2:
+                        _fig_m = px.bar(_lb_fallback.sort_values("MAE"), x="Modelo", y="MAE",
+                                        color="Modelo", color_discrete_sequence=_CORES_MODELOS, title="MAE por modelo")
+                        _fig_m.update_layout(height=320, showlegend=False,
+                                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)")
+                        st.plotly_chart(_fig_m, use_container_width=True)
+                if "SMAPE (%)" in _lb_fallback.columns:
+                    with _l3:
+                        _fig_s = px.bar(_lb_fallback.sort_values("SMAPE (%)"), x="Modelo", y="SMAPE (%)",
+                                        color="Modelo", color_discrete_sequence=_CORES_MODELOS, title="SMAPE por modelo")
+                        _fig_s.update_layout(height=320, showlegend=False,
+                                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)")
+                        st.plotly_chart(_fig_s, use_container_width=True)
+
+                st.markdown(
+                    f"""
+                    <div class="good-box">
+                        <b>Melhor modelo: {_best.get('Modelo', 'N/A')}</b><br>
+                        RMSE = {fmt_number(_best.get('RMSE'))} &nbsp;|&nbsp;
+                        MAE = {fmt_number(_best.get('MAE'))} &nbsp;|&nbsp;
+                        SMAPE = {fmt_pct(_best.get('SMAPE (%)'))}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.warning("MLflow indisponível e leaderboard.csv não encontrado. Execute o pipeline de treinamento primeiro.")
+            st.caption(f"Erro MLflow: {_e}")
 
 
 # =========================================================

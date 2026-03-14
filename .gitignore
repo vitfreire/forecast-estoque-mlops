@@ -18,13 +18,26 @@ Thumbs.db
 
 # Dados (raw e processados nunca vão pro git — use DVC ou Kaggle API para reprodução)
 data/
-*.parquet
 *.pkl
 *.joblib
 
-# Artefatos do pipeline (se forem gerados automaticamente)
-artifacts/*.json
-artifacts/*.txt
+# Artefatos do pipeline — ignora tudo exceto os arquivos necessários para o dashboard
+artifacts/*
+!artifacts/reports/
+!artifacts/metadata/
+!artifacts/feature_importance/
+artifacts/reports/*
+!artifacts/reports/leaderboard.csv
+!artifacts/reports/valid_predictions.parquet
+artifacts/feature_importance/*
+!artifacts/feature_importance/lightgbm/
+!artifacts/feature_importance/xgboost/
+!artifacts/feature_importance/random_forest/
+
+# Parquet em geral ignorado, exceto previsões do dashboard
+*.parquet
+!artifacts/reports/valid_predictions.parquet
+!reports/batch_predictions.parquet
 
 # Logs
 *.log
@@ -34,14 +47,13 @@ artifacts/*.txt
 dist/
 build/
 
-# Relatórios gerados
-reports/
+# Relatórios gerados — ignora tudo exceto batch_predictions
+reports/*
+!reports/batch_predictions.parquet
 forecast/reports/
 
 #MLflow
-
 mlruns/
 mlartifacts/
 mlflow.db
 .env
-artifacts/

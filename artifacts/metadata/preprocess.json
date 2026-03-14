@@ -1,0 +1,43 @@
+{
+  "target_col": "Weekly_Sales",
+  "feature_columns": [
+    "Store",
+    "Dept",
+    "Temperature",
+    "Fuel_Price",
+    "MarkDown1",
+    "MarkDown2",
+    "MarkDown3",
+    "MarkDown4",
+    "MarkDown5",
+    "CPI",
+    "Unemployment",
+    "Size",
+    "IsHoliday",
+    "year",
+    "month",
+    "weekofyear",
+    "dayofweek",
+    "is_month_start",
+    "is_month_end",
+    "week_sin",
+    "week_cos",
+    "lag_1",
+    "lag_2",
+    "lag_3",
+    "lag_4",
+    "roll_mean_4",
+    "roll_std_4",
+    "roll_mean_8",
+    "roll_std_8",
+    "roll_mean_12",
+    "roll_std_12",
+    "diff_1",
+    "Type_A",
+    "Type_B",
+    "Type_C"
+  ],
+  "categorical_cols": [
+    "Type"
+  ]
+}
