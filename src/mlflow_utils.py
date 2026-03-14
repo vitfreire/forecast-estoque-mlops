@@ -8,6 +8,3 @@ def setup_mlflow():
 
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
-
-    mlflow.set_tag("environment", os.getenv("APP_ENV", "prod"))
-    mlflow.set_tag("project", "forecast-estoque-mlops")

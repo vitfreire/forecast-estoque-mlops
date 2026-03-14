@@ -220,7 +220,7 @@ def train_compare_and_log(
     setup_mlflow()
     _maybe_end_active_runs()
 
-    run_models = parse_run_models(os.getenv("RUN_MODELS", "lightgbm"))
+    run_models = parse_run_models(os.getenv("RUN_MODELS", "lightgbm,xgboost,random_forest"))
     registry = build_model_registry()
 
     eval_mode = os.getenv("EVAL_MODE", "holdout").lower().strip()
