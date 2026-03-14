@@ -6,11 +6,14 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import datetime
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import mlflow
+from mlflow.tracking import MlflowClient
 
 
 # =========================================================
@@ -616,8 +619,30 @@ caminho_features_json_padrao = primeiro_arquivo_existente(
 st.sidebar.markdown("## Forecast Intelligence")
 st.sidebar.caption("Painel executivo de previsão de vendas")
 
+st.sidebar.markdown("---")
+st.sidebar.markdown("### MLflow")
+mlflow_uri = st.sidebar.text_input(
+    "Tracking URI",
+    value=os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns"),
+    help="file:./mlruns para local, http://... para servidor remoto.",
+)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Arquivos")
 caminho_previsoes = st.sidebar.text_input("Arquivo de previsões", value=caminho_previsoes_padrao)
-caminho_importancia = st.sidebar.text_input("Arquivo de feature importance", value=caminho_importancia_padrao)
+
+# Detecta modelos disponíveis em artifacts/feature_importance/
+_artif_fi_dir = os.path.join("artifacts", "feature_importance")
+_modelos_fi = sorted([
+    d for d in os.listdir(_artif_fi_dir)
+    if os.path.isdir(os.path.join(_artif_fi_dir, d))
+]) if os.path.exists(_artif_fi_dir) else []
+
+if _modelos_fi:
+    _modelo_fi_sel = st.sidebar.selectbox("Modelo (feature importance)", _modelos_fi)
+    caminho_importancia = os.path.join(_artif_fi_dir, _modelo_fi_sel, "feature_importance.csv")
+else:
+    caminho_importancia = st.sidebar.text_input("Arquivo de feature importance", value=caminho_importancia_padrao)
 
 if caminho_best_meta_json_padrao:
     caminho_best_meta_json = st.sidebar.text_input("Arquivo best_model_meta.json", value=caminho_best_meta_json_padrao)
@@ -802,6 +827,7 @@ tabs = st.tabs(
         "Impacto no Negócio",
         "Store & Department Insights",
         "Model Explainability",
+        "Model Leaderboard",
         "Model Intelligence",
         "Model Monitoring",
         "Dados",
@@ -1350,10 +1376,149 @@ with tabs[5]:
         )
 
 # =========================================================
-# TAB 7 - MODEL INTELLIGENCE
+# TAB 7 - MODEL LEADERBOARD (MLflow)
 # =========================================================
 
+_CORES_MODELOS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#a855f7"]
+
 with tabs[6]:
+    caixa_secao(
+        "Model Leaderboard",
+        "Comparativo de performance dos modelos treinados — conectado diretamente ao MLflow.",
+    )
+
+    try:
+        mlflow.set_tracking_uri(mlflow_uri)
+        _client = MlflowClient()
+        _exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "forecast_estoque_walmart")
+        _exp = _client.get_experiment_by_name(_exp_name)
+
+        if _exp is None:
+            st.info(
+                f"Experimento '{_exp_name}' não encontrado no MLflow. "
+                "Execute o pipeline de treinamento primeiro."
+            )
+        else:
+            _parent_runs = _client.search_runs(
+                experiment_ids=[_exp.experiment_id],
+                filter_string="tags.`mlflow.runName` = 'train_compare'",
+                order_by=["start_time DESC"],
+                max_results=20,
+            )
+
+            if not _parent_runs:
+                st.info("Nenhum run de treinamento encontrado. Execute o pipeline primeiro.")
+            else:
+                _run_labels = {}
+                for _r in _parent_runs:
+                    _dt = datetime.datetime.fromtimestamp(_r.info.start_time / 1000).strftime("%Y-%m-%d %H:%M")
+                    _run_labels[f"{_dt}  —  run {_r.info.run_id[:8]}"] = _r.info.run_id
+
+                _sel_label = st.selectbox("Selecione o run de treinamento", list(_run_labels.keys()))
+                _sel_run_id = _run_labels[_sel_label]
+
+                _child_runs = _client.search_runs(
+                    experiment_ids=[_exp.experiment_id],
+                    filter_string=f"tags.`mlflow.parentRunId` = '{_sel_run_id}'",
+                    order_by=["metrics.rmse ASC"],
+                )
+
+                if _child_runs:
+                    _lb_rows = []
+                    for _run in _child_runs:
+                        _lb_rows.append({
+                            "Modelo": _run.data.tags.get("mlflow.runName", _run.info.run_id[:8]),
+                            "RMSE": _run.data.metrics.get("rmse"),
+                            "MAE": _run.data.metrics.get("mae"),
+                            "SMAPE (%)": _run.data.metrics.get("smape"),
+                            "Treino (s)": round(_run.data.metrics.get("train_seconds", 0), 1),
+                        })
+
+                    _lb_df = pd.DataFrame(_lb_rows).sort_values("RMSE").reset_index(drop=True)
+
+                    st.markdown("### Comparativo de modelos")
+                    st.dataframe(_lb_df, use_container_width=True)
+
+                    _l1, _l2, _l3 = st.columns(3)
+
+                    with _l1:
+                        _fig_r = px.bar(
+                            _lb_df.sort_values("RMSE"),
+                            x="Modelo", y="RMSE",
+                            color="Modelo",
+                            color_discrete_sequence=_CORES_MODELOS,
+                            title="RMSE por modelo",
+                        )
+                        _fig_r.update_layout(
+                            height=320, showlegend=False,
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(255,255,255,0.02)",
+                        )
+                        st.plotly_chart(_fig_r, use_container_width=True)
+
+                    with _l2:
+                        _fig_m = px.bar(
+                            _lb_df.sort_values("MAE"),
+                            x="Modelo", y="MAE",
+                            color="Modelo",
+                            color_discrete_sequence=_CORES_MODELOS,
+                            title="MAE por modelo",
+                        )
+                        _fig_m.update_layout(
+                            height=320, showlegend=False,
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(255,255,255,0.02)",
+                        )
+                        st.plotly_chart(_fig_m, use_container_width=True)
+
+                    with _l3:
+                        _fig_s = px.bar(
+                            _lb_df.sort_values("SMAPE (%)"),
+                            x="Modelo", y="SMAPE (%)",
+                            color="Modelo",
+                            color_discrete_sequence=_CORES_MODELOS,
+                            title="SMAPE por modelo",
+                        )
+                        _fig_s.update_layout(
+                            height=320, showlegend=False,
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(255,255,255,0.02)",
+                        )
+                        st.plotly_chart(_fig_s, use_container_width=True)
+
+                    _best = _lb_df.iloc[0]
+                    st.markdown(
+                        f"""
+                        <div class="good-box">
+                            <b>Melhor modelo: {_best['Modelo']}</b><br>
+                            RMSE = {fmt_number(_best.get('RMSE'))} &nbsp;|&nbsp;
+                            MAE = {fmt_number(_best.get('MAE'))} &nbsp;|&nbsp;
+                            SMAPE = {fmt_pct(_best.get('SMAPE (%)'))}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                    _parent_run_data = _client.get_run(_sel_run_id)
+                    st.markdown("### Metadados do run")
+                    _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+                    _mc1.metric("Modelos treinados", _parent_run_data.data.params.get("models", "N/A"))
+                    _mc2.metric("Linhas de treino", _parent_run_data.data.params.get("train_rows", "N/A"))
+                    _mc3.metric("Features", _parent_run_data.data.params.get("n_features", "N/A"))
+                    _mc4.metric("Modo avaliação", _parent_run_data.data.params.get("eval_mode", "N/A"))
+                else:
+                    st.info("Runs filhos não encontrados para este experimento.")
+
+    except Exception as _e:
+        st.error(f"Erro ao conectar ao MLflow: {_e}")
+        st.caption("Verifique o Tracking URI na barra lateral e se o pipeline de treinamento foi executado.")
+
+
+# =========================================================
+# TAB 8 - MODEL INTELLIGENCE
+# =========================================================
+
+with tabs[7]:
     caixa_secao(
         "Model intelligence",
         "Explica a estrutura do pipeline e como o modelo foi montado.",
@@ -1415,10 +1580,10 @@ with tabs[6]:
         st.info("Não foi possível identificar a lista de features do pipeline.")
 
 # =========================================================
-# TAB 8 - MODEL MONITORING
+# TAB 9 - MODEL MONITORING
 # =========================================================
 
-with tabs[7]:
+with tabs[8]:
     caixa_secao(
         "Model monitoring",
         "Camada de monitoramento do comportamento do erro e metadados do modelo.",
@@ -1500,10 +1665,10 @@ with tabs[7]:
     )
 
 # =========================================================
-# TAB 9 - DADOS
+# TAB 10 - DADOS
 # =========================================================
 
-with tabs[8]:
+with tabs[9]:
     caixa_secao(
         "Dados",
         "Camada operacional para inspeção do recorte analisado.",
