@@ -1,0 +1,72 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────
+# Uso rápido:
+#   Só o dashboard:  docker compose up dashboard
+#   Treinar modelos: docker compose run --rm training
+#   Tudo (MLflow + dashboard): docker compose up mlflow dashboard
+# ─────────────────────────────────────────────────────────────
+
+services:
+
+  # ── MLflow Tracking Server ──────────────────────────────────
+  mlflow:
+    image: python:3.11-slim
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlruns_data:/mlruns
+    command: >
+      bash -c "pip install mlflow --quiet &&
+               mlflow server
+               --backend-store-uri /mlruns
+               --default-artifact-root /mlruns
+               --host 0.0.0.0
+               --port 5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Pipeline de treinamento ─────────────────────────────────
+  training:
+    build: .
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MLFLOW_EXPERIMENT_NAME=forecast_estoque_walmart
+      - MLFLOW_REGISTERED_MODEL_NAME=walmart_forecast_lgbm_cost
+      - APP_ENV=${APP_ENV:-dev}
+      - RUN_MODELS=${RUN_MODELS:-lightgbm,xgboost,random_forest}
+      - EVAL_MODE=${EVAL_MODE:-holdout}
+      - HORIZON_DAYS=${HORIZON_DAYS:-28}
+      - COST_UNDER=${COST_UNDER:-6.0}
+      - COST_OVER=${COST_OVER:-1.5}
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+    command: python -m flows.training_flow
+    profiles:
+      - training
+
+  # ── Dashboard Streamlit ─────────────────────────────────────
+  dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MLFLOW_EXPERIMENT_NAME=forecast_estoque_walmart
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+      - ./reports:/app/reports
+
+volumes:
+  mlruns_data:
