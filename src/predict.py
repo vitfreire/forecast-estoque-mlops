@@ -172,7 +172,7 @@ def predict(
 
     data = df.drop(columns=[target_col], errors="ignore").copy()
 
-    meta = _load_preprocess_metadata(
+    _load_preprocess_metadata(
         artifacts_dir=artifacts_dir,
         model_name=model_name,
     )

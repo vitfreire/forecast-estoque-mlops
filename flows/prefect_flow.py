@@ -182,7 +182,7 @@ def build_design_matrix(df: pd.DataFrame, cfg: DatasetConfig) -> Tuple[pd.DataFr
     d = df.copy()
 
     # target
-    y = d[cfg.target_col].astype(float).values
+    _y = d[cfg.target_col].astype(float).values  # noqa: F841
 
     # date -> time features
     d = add_time_features(d, cfg.date_col)
@@ -213,7 +213,7 @@ def build_design_matrix(df: pd.DataFrame, cfg: DatasetConfig) -> Tuple[pd.DataFr
         d = pd.get_dummies(d, columns=cat_cols, drop_first=False)
 
     # numérico final
-    X = d.apply(pd.to_numeric, errors="coerce").astype("float64").fillna(0.0) 
+    _X = d.apply(pd.to_numeric, errors="coerce").astype("float64").fillna(0.0)
 
 
 def parse_run_models() -> List[str]:
@@ -399,7 +399,7 @@ def train_and_track_mlflow(cfg: DatasetConfig, tcfg: TrainConfig, train_df: pd.D
     results: List[Dict] = []
     best: Dict[str, object] = {"model_name": None, "rmse": float("inf"), "model": None}
 
-    with mlflow.start_run(run_name=f"prefect_{app_env}") as parent_run:
+    with mlflow.start_run(run_name=f"prefect_{app_env}"):
         mlflow.set_tag("app_env", app_env)
         mlflow.set_tag("run_type", "train_compare")
         mlflow.log_param("valid_frac", cfg.valid_frac)

@@ -276,7 +276,7 @@ def main():
 
     model = load_model_from_registry()
 
-    pred_df = run_inference_and_save(model, batch_df)
+    run_inference_and_save(model, batch_df)
 
     drift_ref = load_drift_reference_from_latest_run()
 

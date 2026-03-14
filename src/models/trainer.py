@@ -196,8 +196,6 @@ def _save_feature_importance_plot(df_imp: pd.DataFrame, path_png: str, top_k: in
     """
     Gera gráfico simples com matplotlib (sem seaborn).
     """
-    import matplotlib.pyplot as plt
-
     os.makedirs(os.path.dirname(path_png), exist_ok=True)
 
     plot_df = df_imp.head(top_k).iloc[::-1]  # inverte para aparecer maior no topo
