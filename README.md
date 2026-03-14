@@ -1,5 +1,7 @@
 # Retail Forecast Intelligence — Previsão de Demanda com MLOps
 
+![CI](https://github.com/vitfreire/forecast-estoque-mlops/actions/workflows/ci.yml/badge.svg)
+
 Sistema end-to-end de previsão de vendas semanais para varejo, construído com foco em MLOps real: treinamento multi-modelo com comparação automática, rastreamento completo de experimentos via MLflow, orquestração de pipeline com Prefect, otimização de estoque baseada em custo assimétrico, monitoramento de drift em produção e dashboard analítico interativo.
 
 ---
@@ -36,6 +38,9 @@ O pipeline completo faz:
 | Dashboard | Streamlit + Plotly |
 | Features | Pandas, NumPy |
 | Config | Pydantic Settings |
+| Testes | pytest (47 testes unitários) |
+| CI/CD | GitHub Actions |
+| Containerização | Docker + Docker Compose |
 | Ambiente | Python 3.11, venv |
 
 ---
@@ -162,6 +167,59 @@ O dashboard carrega automaticamente as previsões de `reports/batch_predictions.
 
 ---
 
+## Testes
+
+O projeto possui 47 testes unitários cobrindo as camadas críticas do pipeline:
+
+```bash
+# Instalar dependências de teste (se necessário)
+pip install pytest
+
+# Rodar todos os testes
+pytest tests/ -v
+```
+
+| Módulo testado | Testes | O que verifica |
+|---|---|---|
+| `src/metrics.py` | 9 | MAE, RMSE, SMAPE — valores conhecidos e propriedades matemáticas |
+| `src/cost.py` | 5 | Função de custo assimétrico — subprevisão é mais cara que superprevisão |
+| `src/features/features.py` | 13 | Features de calendário, lags, rolling stats — ausência de leakage |
+| `src/split.py` | 10 | Temporal split e rolling CV — sem vazamento, shapes corretos |
+| `src/models/preprocessing.py` | 10 | Encoding, alinhamento de colunas entre treino e validação |
+
+---
+
+## Docker
+
+### Rodar com Docker Compose (recomendado)
+
+```bash
+# Sobe MLflow server + dashboard
+docker compose up mlflow dashboard
+
+# Dashboard:  http://localhost:8501
+# MLflow UI:  http://localhost:5000
+```
+
+### Rodar o pipeline de treinamento via Docker
+
+```bash
+# Modo dev (rápido, 5 lojas)
+APP_ENV=dev docker compose run --rm training
+
+# Modo produção
+docker compose run --rm training
+```
+
+### Build manual
+
+```bash
+docker build -t forecast-intelligence .
+docker run -p 8501:8501 forecast-intelligence
+```
+
+---
+
 ## Estrutura do projeto
 
 ```
@@ -201,8 +259,19 @@ O dashboard carrega automaticamente as previsões de `reports/batch_predictions.
 ├── data/
 │   ├── raw/                    # CSVs originais do Kaggle (não versionados)
 │   └── processed/              # Dataset processado (não versionado)
+├── tests/                      # Testes unitários (pytest)
+│   ├── test_metrics.py
+│   ├── test_cost.py
+│   ├── test_features.py
+│   ├── test_split.py
+│   └── test_preprocessing.py
+├── .github/
+│   └── workflows/
+│       └── ci.yml              # GitHub Actions — lint + testes automáticos
 ├── artifacts/                  # Artifacts do pipeline (feature importances, leaderboard)
 ├── mlruns/                     # Banco de dados local do MLflow (não versionado)
+├── Dockerfile
+├── docker-compose.yml
 ├── .env.example                # Template de variáveis de ambiente
 ├── pyproject.toml
 └── requirements.txt
