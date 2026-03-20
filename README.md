@@ -1,8 +1,33 @@
 # Retail Forecast Intelligence — Previsão de Demanda com MLOps
 
 ![CI](https://github.com/vitfreire/forecast-estoque-mlops/actions/workflows/ci.yml/badge.svg)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://forecast-estoque-mlops.streamlit.app)
 
 Sistema end-to-end de previsão de vendas semanais para varejo, construído com foco em MLOps real: treinamento multi-modelo com comparação automática, rastreamento completo de experimentos via MLflow, orquestração de pipeline com Prefect, otimização de estoque baseada em custo assimétrico, monitoramento de drift em produção e dashboard analítico interativo.
+
+---
+
+## Interface
+
+> Dashboard interativo com 10 abas — da visão executiva ao monitoramento de modelos.
+
+### Resumo Executivo
+![Resumo Executivo](docs/screenshots/01_resumo_executivo.png)
+
+### Performance Comercial
+![Performance Comercial](docs/screenshots/02_performance_comercial.png)
+
+### Forecast Analysis
+![Forecast Analysis](docs/screenshots/03_forecast_analysis.png)
+
+### Store & Department Insights — Heatmap de Erro
+![Heatmap Loja × Departamento](docs/screenshots/04_heatmap.png)
+
+### Model Leaderboard
+![Leaderboard](docs/screenshots/05_leaderboard.png)
+
+### Model Monitoring — Drift do Erro
+![Drift do Erro](docs/screenshots/06_monitoring.png)
 
 ---
 

@@ -597,6 +597,7 @@ caminho_meta_yaml_padrao = primeiro_arquivo_existente(
 
 caminho_best_meta_json_padrao = primeiro_arquivo_existente(
     [
+        "artifacts/models/best_model_meta.json",
         "best_model_meta.json",
         "/mnt/data/best_model_meta.json",
     ]
@@ -1058,6 +1059,7 @@ with tabs[1]:
             df_filtrado,
             x="Weekly_Sales",
             nbins=45,
+            color_discrete_sequence=["#3b82f6"],
         )
         fig_hist_vendas.update_layout(
             height=380,
@@ -1296,8 +1298,8 @@ with tabs[4]:
     st.markdown("### Heatmap loja × departamento")
     st.caption("Quanto mais intenso o bloco, maior o erro médio naquele cruzamento.")
 
-    if {"Store_Label", "Dept_Label", "erro_abs"}.issubset(df.columns):
-        heatmap = df.pivot_table(
+    if {"Store_Label", "Dept_Label", "erro_abs"}.issubset(df_filtrado.columns):
+        heatmap = df_filtrado.pivot_table(
             values="erro_abs",
             index="Store_Label",
             columns="Dept_Label",
@@ -1307,6 +1309,8 @@ with tabs[4]:
         if not heatmap.empty:
             fig_heat = px.imshow(
                 heatmap,
+                x=heatmap.columns.tolist(),
+                y=heatmap.index.tolist(),
                 aspect="auto",
             )
             fig_heat.update_layout(
@@ -1435,15 +1439,22 @@ with tabs[6]:
                 if _child_runs:
                     _lb_rows = []
                     for _run in _child_runs:
+                        _rmse = _run.data.metrics.get("rmse") or _run.data.metrics.get("RMSE")
+                        _mae = _run.data.metrics.get("mae") or _run.data.metrics.get("MAE")
+                        _smape = _run.data.metrics.get("smape") or _run.data.metrics.get("SMAPE")
                         _lb_rows.append({
                             "Modelo": _run.data.tags.get("mlflow.runName", _run.info.run_id[:8]),
-                            "RMSE": _run.data.metrics.get("rmse"),
-                            "MAE": _run.data.metrics.get("mae"),
-                            "SMAPE (%)": _run.data.metrics.get("smape"),
-                            "Treino (s)": round(_run.data.metrics.get("train_seconds", 0), 1),
+                            "RMSE": float(_rmse) if _rmse is not None else None,
+                            "MAE": float(_mae) if _mae is not None else None,
+                            "SMAPE (%)": float(_smape) if _smape is not None else None,
+                            "Treino (s)": round(_run.data.metrics.get("train_seconds", 0) or 0, 1),
                         })
 
-                    _lb_df = pd.DataFrame(_lb_rows).sort_values("RMSE").reset_index(drop=True)
+                    _lb_df = pd.DataFrame(_lb_rows)
+                    # Se todas as métricas vieram None, usa o CSV como fallback
+                    if _lb_df["RMSE"].isna().all():
+                        raise ValueError("Métricas ausentes no MLflow — usando CSV fallback")
+                    _lb_df = _lb_df.sort_values("RMSE").reset_index(drop=True)
 
                     st.markdown("### Comparativo de modelos")
                     st.dataframe(_lb_df, use_container_width=True)
@@ -1659,7 +1670,9 @@ with tabs[8]:
 
         if "Date" in df_filtrado.columns and "erro_abs" in df_filtrado.columns:
             drift_df = df_filtrado.copy()
-            drift_df["mes_ref"] = drift_df["Date"].dt.to_period("M").astype(str)
+            # Converte para primeiro dia do mês para evitar que Plotly interprete
+            # strings de período ("2012-09") como timestamps de fim de período
+            drift_df["mes_ref"] = drift_df["Date"].dt.to_period("M").dt.to_timestamp()
 
             drift_agg = (
                 drift_df.groupby("mes_ref", as_index=False)["erro_abs"]
@@ -1680,6 +1693,7 @@ with tabs[8]:
                 plot_bgcolor="rgba(255,255,255,0.02)",
                 xaxis_title="Mês",
                 yaxis_title="Erro absoluto médio",
+                xaxis=dict(tickformat="%b %Y"),
             )
             st.plotly_chart(fig_drift, use_container_width=True)
 
