@@ -12,8 +12,12 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-import mlflow
-from mlflow.tracking import MlflowClient
+try:
+    import mlflow
+    from mlflow.tracking import MlflowClient
+    _MLFLOW_AVAILABLE = True
+except ImportError:
+    _MLFLOW_AVAILABLE = False
 
 
 # =========================================================
@@ -620,12 +624,15 @@ st.sidebar.markdown("## Forecast Intelligence")
 st.sidebar.caption("Painel executivo de previsão de vendas")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### MLflow")
-mlflow_uri = st.sidebar.text_input(
-    "Tracking URI",
-    value=os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns"),
-    help="file:./mlruns para local, http://... para servidor remoto.",
-)
+if _MLFLOW_AVAILABLE:
+    st.sidebar.markdown("### MLflow")
+    mlflow_uri = st.sidebar.text_input(
+        "Tracking URI",
+        value=os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns"),
+        help="file:./mlruns para local, http://... para servidor remoto.",
+    )
+else:
+    mlflow_uri = "file:./mlruns"
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Arquivos")
@@ -1388,6 +1395,8 @@ with tabs[6]:
     )
 
     try:
+        if not _MLFLOW_AVAILABLE:
+            raise ImportError("mlflow não instalado")
         mlflow.set_tracking_uri(mlflow_uri)
         _client = MlflowClient()
         _exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "forecast_estoque_walmart")
