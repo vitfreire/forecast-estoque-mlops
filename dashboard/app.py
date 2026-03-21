@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 from pathlib import Path
 from typing import Optional
@@ -12,12 +11,20 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+
 try:
     import mlflow
     from mlflow.tracking import MlflowClient
     _MLFLOW_AVAILABLE = True
 except ImportError:
     _MLFLOW_AVAILABLE = False
+
+
+# =========================================================
+# BASE DIR — funciona localmente e no Streamlit Cloud
+# =========================================================
+
+BASE_DIR = Path(__file__).parent.parent  # raiz do repositório
 
 
 # =========================================================
@@ -30,6 +37,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
 
 # =========================================================
 # CSS / TEMA VISUAL
@@ -126,17 +134,17 @@ st.markdown(
             margin-top: 4px;
         }
 
-        .info-box {
-            background: rgba(59,130,246,0.08);
-            border: 1px solid rgba(96,165,250,0.22);
-            border-left: 4px solid #60a5fa;
+        .alert-red {
+            background: rgba(239,68,68,0.12);
+            border: 1px solid rgba(239,68,68,0.30);
+            border-left: 4px solid #ef4444;
             border-radius: 14px;
             padding: 14px 16px;
             margin-top: 10px;
             margin-bottom: 10px;
         }
 
-        .warn-box {
+        .alert-yellow {
             background: rgba(245,158,11,0.10);
             border: 1px solid rgba(245,158,11,0.25);
             border-left: 4px solid #f59e0b;
@@ -146,10 +154,20 @@ st.markdown(
             margin-bottom: 10px;
         }
 
-        .good-box {
+        .alert-green {
             background: rgba(16,185,129,0.10);
             border: 1px solid rgba(16,185,129,0.25);
             border-left: 4px solid #10b981;
+            border-radius: 14px;
+            padding: 14px 16px;
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+
+        .info-box {
+            background: rgba(59,130,246,0.08);
+            border: 1px solid rgba(96,165,250,0.22);
+            border-left: 4px solid #60a5fa;
             border-radius: 14px;
             padding: 14px 16px;
             margin-top: 10px;
@@ -179,43 +197,35 @@ st.markdown(
             background: rgba(59,130,246,0.14) !important;
             border: 1px solid rgba(96,165,250,0.28) !important;
         }
-
-        .footer-note {
-            color: #a9b8d1 !important;
-            font-size: 0.82rem;
-        }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
 
 # =========================================================
 # FUNÇÕES AUXILIARES
 # =========================================================
 
 def fmt_money(valor: Optional[float]) -> str:
-    """Formata valor monetário."""
     if valor is None or pd.isna(valor):
         return "N/A"
     return f"${valor:,.0f}"
 
 
 def fmt_number(valor: Optional[float], casas: int = 2) -> str:
-    """Formata número decimal."""
     if valor is None or pd.isna(valor):
         return "N/A"
     return f"{valor:,.{casas}f}"
 
 
 def fmt_pct(valor: Optional[float], casas: int = 1) -> str:
-    """Formata percentual."""
     if valor is None or pd.isna(valor):
         return "N/A"
     return f"{valor:.{casas}f}%"
 
 
 def primeiro_arquivo_existente(candidatos: list[str]) -> Optional[str]:
-    """Retorna o primeiro arquivo que existir."""
     for caminho in candidatos:
         if os.path.exists(caminho):
             return caminho
@@ -223,7 +233,6 @@ def primeiro_arquivo_existente(candidatos: list[str]) -> Optional[str]:
 
 
 def card_kpi(titulo: str, valor: str, descricao: str) -> str:
-    """Cria card visual de KPI."""
     return f"""
     <div class="kpi-card">
         <div class="kpi-title">{titulo}</div>
@@ -234,7 +243,6 @@ def card_kpi(titulo: str, valor: str, descricao: str) -> str:
 
 
 def caixa_secao(titulo: str, subtitulo: str) -> None:
-    """Cria caixa visual de seção."""
     st.markdown(
         f"""
         <div class="section-card">
@@ -246,28 +254,26 @@ def caixa_secao(titulo: str, subtitulo: str) -> None:
     )
 
 
-def classificar_mape(mape: Optional[float]) -> tuple[str, str]:
-    """Classifica o MAPE para leitura executiva."""
-    if mape is None or pd.isna(mape):
-        return "Sem leitura", "Não foi possível calcular o erro percentual médio."
-    if mape <= 10:
-        return "Alta confiabilidade", "O modelo está em faixa forte para apoiar decisão comercial."
-    if mape <= 20:
-        return "Boa confiabilidade", "A previsão ajuda o negócio, mas exige monitoramento."
-    if mape <= 30:
-        return "Atenção", "O erro já pode gerar impacto relevante em estoque e receita."
-    return "Risco elevado", "O erro ainda está alto para decisões mais sensíveis."
+def classificar_smape(smape: Optional[float]) -> tuple[str, str, str]:
+    """Retorna (label, classe_css, descricao) baseado no SMAPE."""
+    if smape is None or pd.isna(smape):
+        return "Sem leitura", "info-box", "Não foi possível calcular o erro percentual."
+    if smape <= 8:
+        return "Alta confiabilidade", "alert-green", f"SMAPE de {smape:.1f}% — excelente para apoiar decisões de estoque."
+    if smape <= 15:
+        return "Boa confiabilidade", "alert-green", f"SMAPE de {smape:.1f}% — previsão útil, monitorar segmentos críticos."
+    if smape <= 25:
+        return "Atenção", "alert-yellow", f"SMAPE de {smape:.1f}% — erro pode impactar estoque e receita."
+    return "Risco elevado", "alert-red", f"SMAPE de {smape:.1f}% — revisar modelo antes de usar em produção."
 
 
 def safe_mean(series: pd.Series) -> Optional[float]:
-    """Retorna média segura."""
     if series is None or series.dropna().empty:
         return None
     return float(series.dropna().mean())
 
 
 def safe_sum(series: pd.Series) -> Optional[float]:
-    """Retorna soma segura."""
     if series is None or series.dropna().empty:
         return None
     return float(series.dropna().sum())
@@ -279,13 +285,8 @@ def safe_sum(series: pd.Series) -> Optional[float]:
 
 @st.cache_data(show_spinner=False)
 def carregar_previsoes(caminho: str) -> pd.DataFrame:
-    """
-    Carrega o parquet de previsões e cria colunas auxiliares
-    para análise de negócio e qualidade da previsão.
-    """
     df = pd.read_parquet(caminho).copy()
 
-    # Normalização mínima
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
@@ -296,72 +297,46 @@ def carregar_previsoes(caminho: str) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Métricas de erro
     if {"Weekly_Sales", "y_pred"}.issubset(df.columns):
         df["erro"] = df["Weekly_Sales"] - df["y_pred"]
         df["erro_abs"] = df["erro"].abs()
-
         denominador = df["Weekly_Sales"].replace(0, np.nan).abs()
         df["erro_pct"] = (df["erro_abs"] / denominador) * 100
+        df["superprevisao"] = np.where(df["y_pred"] > df["Weekly_Sales"], df["y_pred"] - df["Weekly_Sales"], 0.0)
+        df["subprevisao"] = np.where(df["y_pred"] < df["Weekly_Sales"], df["Weekly_Sales"] - df["y_pred"], 0.0)
 
-        # Quando o modelo previu acima do realizado
-        df["superprevisao"] = np.where(
-            df["y_pred"] > df["Weekly_Sales"],
-            df["y_pred"] - df["Weekly_Sales"],
-            0.0,
-        )
-
-        # Quando o modelo previu abaixo do realizado
-        df["subprevisao"] = np.where(
-            df["y_pred"] < df["Weekly_Sales"],
-            df["Weekly_Sales"] - df["y_pred"],
-            0.0,
-        )
-
-    # Nomes amigáveis
     if "Store" in df.columns:
-        df["Store_Label"] = "Store " + df["Store"].astype(str)
-
+        df["Store_Label"] = "Loja " + df["Store"].astype(str)
     if "Dept" in df.columns:
-        df["Dept_Label"] = "Department " + df["Dept"].astype(str)
+        df["Dept_Label"] = "Depto " + df["Dept"].astype(str)
 
     return df
 
 
 @st.cache_data(show_spinner=False)
 def carregar_feature_importance(caminho: Optional[str]) -> pd.DataFrame:
-    """Carrega o CSV de importância das variáveis."""
     if caminho is None or not os.path.exists(caminho):
         return pd.DataFrame()
-
     df = pd.read_csv(caminho).copy()
-
     colunas_lower = {c.lower(): c for c in df.columns}
-    col_feature = None
-    col_importance = None
-
+    col_feature, col_importance = None, None
     for nome in ["feature", "variavel", "variable", "name"]:
         if nome in colunas_lower:
             col_feature = colunas_lower[nome]
             break
-
     for nome in ["importance", "gain", "score", "valor"]:
         if nome in colunas_lower:
             col_importance = colunas_lower[nome]
             break
-
     if col_feature and col_importance:
         df = df[[col_feature, col_importance]].copy()
         df.columns = ["feature", "importance"]
-        df = df.sort_values("importance", ascending=False)
-        return df
-
+        return df.sort_values("importance", ascending=False)
     return pd.DataFrame()
 
 
 @st.cache_data(show_spinner=False)
-def carregar_json_se_existir(caminho: Optional[str]) -> dict:
-    """Carrega arquivo JSON se existir."""
+def carregar_json(caminho: Optional[str]) -> dict:
     if caminho is None or not os.path.exists(caminho):
         return {}
     try:
@@ -371,389 +346,159 @@ def carregar_json_se_existir(caminho: Optional[str]) -> dict:
         return {}
 
 
-@st.cache_data(show_spinner=False)
-def carregar_meta_yaml_simples(caminho: Optional[str]) -> dict:
-    """Carrega informações simples do meta.yaml sem parser externo."""
-    if caminho is None or not os.path.exists(caminho):
-        return {}
-
-    info = {}
-    with open(caminho, "r", encoding="utf-8") as f:
-        for linha in f:
-            if ":" not in linha:
-                continue
-            chave, valor = linha.split(":", 1)
-            chave = chave.strip()
-            valor = valor.strip()
-            if chave in {
-                "name",
-                "version",
-                "run_id",
-                "current_stage",
-                "status",
-                "source",
-                "storage_location",
-            }:
-                info[chave] = valor
-    return info
-
-
-def calcular_impacto_negocio(
-    df: pd.DataFrame,
-    taxa_margem_perdida: float,
-    taxa_custo_excesso: float,
-    taxa_penalidade_ruptura: float,
-) -> pd.DataFrame:
-    """
-    Traduz o erro do modelo para impacto financeiro estimado.
-    """
+def calcular_impacto(df: pd.DataFrame, taxa_margem: float, taxa_excesso: float, taxa_ruptura: float) -> pd.DataFrame:
     base = df.copy()
-
     if {"subprevisao", "superprevisao"}.issubset(base.columns):
-        base["perda_venda_estimada"] = base["subprevisao"] * taxa_margem_perdida
-        base["custo_excesso_estocado"] = base["superprevisao"] * taxa_custo_excesso
-        base["penalidade_ruptura"] = base["subprevisao"] * taxa_penalidade_ruptura
-        base["impacto_total_estimado"] = (
-            base["perda_venda_estimada"]
-            + base["custo_excesso_estocado"]
-            + base["penalidade_ruptura"]
-        )
-
+        base["perda_venda"] = base["subprevisao"] * taxa_margem
+        base["custo_excesso"] = base["superprevisao"] * taxa_excesso
+        base["penalidade_ruptura"] = base["subprevisao"] * taxa_ruptura
+        base["impacto_total"] = base["perda_venda"] + base["custo_excesso"] + base["penalidade_ruptura"]
     return base
 
 
-def resumo_executivo(df: pd.DataFrame) -> dict:
-    """Calcula KPIs principais do recorte."""
-    resumo = {}
-
-    resumo["linhas"] = len(df)
-    resumo["lojas"] = int(df["Store"].nunique()) if "Store" in df.columns else 0
-    resumo["departamentos"] = int(df["Dept"].nunique()) if "Dept" in df.columns else 0
-    resumo["data_inicio"] = df["Date"].min() if "Date" in df.columns and not df.empty else None
-    resumo["data_fim"] = df["Date"].max() if "Date" in df.columns and not df.empty else None
-
-    resumo["receita_real"] = safe_sum(df["Weekly_Sales"]) if "Weekly_Sales" in df.columns else None
-    resumo["receita_prevista"] = safe_sum(df["y_pred"]) if "y_pred" in df.columns else None
-    resumo["erro_total"] = safe_sum(df["erro_abs"]) if "erro_abs" in df.columns else None
-    resumo["mae"] = safe_mean(df["erro_abs"]) if "erro_abs" in df.columns else None
-    resumo["mape"] = safe_mean(df["erro_pct"]) if "erro_pct" in df.columns else None
-    resumo["impacto_total"] = safe_sum(df["impacto_total_estimado"]) if "impacto_total_estimado" in df.columns else None
-
-    return resumo
-
-
-def serie_temporal_agregada(df: pd.DataFrame) -> pd.DataFrame:
-    """Agrega por data para gráficos temporais."""
+def serie_temporal(df: pd.DataFrame) -> pd.DataFrame:
     required = {"Date", "Weekly_Sales", "y_pred"}
     if not required.issubset(df.columns):
         return pd.DataFrame()
-
     colunas = ["Weekly_Sales", "y_pred"]
-    if "impacto_total_estimado" in df.columns:
-        colunas.append("impacto_total_estimado")
-    if "erro_abs" in df.columns:
-        colunas.append("erro_abs")
-
-    ts = (
-        df.groupby("Date", as_index=False)[colunas]
-        .sum(numeric_only=True)
-        .sort_values("Date")
-    )
-
+    for c in ["impacto_total", "erro_abs"]:
+        if c in df.columns:
+            colunas.append(c)
+    ts = df.groupby("Date", as_index=False)[colunas].sum(numeric_only=True).sort_values("Date")
     ts["gap"] = ts["Weekly_Sales"] - ts["y_pred"]
-    ts["gap_abs"] = ts["gap"].abs()
-    ts["crescimento_semanal"] = ts["Weekly_Sales"].pct_change()
-
     return ts
 
 
-def top_impacto_por_dimensao(df: pd.DataFrame, coluna: str, top_n: int = 10) -> pd.DataFrame:
-    """Gera ranking por loja ou departamento."""
-    required = {coluna, "Weekly_Sales", "y_pred", "erro_abs", "impacto_total_estimado"}
-    if not required.issubset(df.columns):
-        return pd.DataFrame()
-
-    agg = (
-        df.groupby(coluna, as_index=False)
-        .agg(
-            receita_real=("Weekly_Sales", "sum"),
-            receita_prevista=("y_pred", "sum"),
-            mae=("erro_abs", "mean"),
-            impacto=("impacto_total_estimado", "sum"),
-            linhas=(coluna, "count"),
-        )
-        .sort_values("impacto", ascending=False)
-        .head(top_n)
-    )
-    return agg
-
-
 def detectar_anomalias(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Detecta anomalias simples usando z-score do erro absoluto.
-    """
-    base = df.copy()
-
-    if "erro_abs" not in base.columns or base["erro_abs"].dropna().empty:
+    if "erro_abs" not in df.columns or df["erro_abs"].dropna().empty:
         return pd.DataFrame()
-
-    media = base["erro_abs"].mean()
-    desvio = base["erro_abs"].std()
-
+    media = df["erro_abs"].mean()
+    desvio = df["erro_abs"].std()
     if pd.isna(desvio) or desvio == 0:
-        base["z_erro"] = 0.0
-    else:
-        base["z_erro"] = (base["erro_abs"] - media) / desvio
-
+        return pd.DataFrame()
+    base = df.copy()
+    base["z_erro"] = (base["erro_abs"] - media) / desvio
     base["anomalia"] = base["z_erro"].abs() >= 2.5
     return base[base["anomalia"]].copy()
 
 
-def gerar_insight_executivo(df: pd.DataFrame) -> str:
-    """Gera um insight executivo automático simples."""
-    if df.empty:
-        return "Não há dados suficientes para gerar insight."
-
-    partes = []
-
-    if "erro_pct" in df.columns and not df["erro_pct"].dropna().empty:
-        mape = df["erro_pct"].dropna().mean()
-        partes.append(f"O erro percentual médio do recorte está em {mape:.2f}%.")
-
-    if "impacto_total_estimado" in df.columns and not df["impacto_total_estimado"].dropna().empty:
-        impacto = df["impacto_total_estimado"].sum()
-        partes.append(f"O impacto financeiro estimado acumulado é de {fmt_money(impacto)}.")
-
-    if {"Store_Label", "impacto_total_estimado"}.issubset(df.columns):
-        risco_loja = (
-            df.groupby("Store_Label", as_index=False)["impacto_total_estimado"]
-            .sum()
-            .sort_values("impacto_total_estimado", ascending=False)
-        )
-        if not risco_loja.empty:
-            loja = risco_loja.iloc[0]["Store_Label"]
-            partes.append(f"A maior concentração de risco está em {loja}.")
-
-    partes.append(
-        "A recomendação é priorizar ajustes nos segmentos com maior impacto antes de ampliar mudanças para toda a operação."
-    )
-    return " ".join(partes)
-
-
-def categorizar_features(feature_names: list[str]) -> dict[str, list[str]]:
-    """Organiza features em grupos de negócio/modelagem."""
-    grupos = {
-        "Histórico de vendas": [],
-        "Estatísticas móveis": [],
-        "Calendário": [],
-        "Promoções e contexto": [],
-        "Estrutura da loja": [],
-        "Outras": [],
-    }
-
-    for f in feature_names:
-        if f.startswith("lag_") or f == "diff_1":
-            grupos["Histórico de vendas"].append(f)
-        elif f.startswith("roll_"):
-            grupos["Estatísticas móveis"].append(f)
-        elif f in {"year", "month", "weekofyear", "dayofweek", "is_month_start", "is_month_end", "week_sin", "week_cos"}:
-            grupos["Calendário"].append(f)
-        elif f in {"Temperature", "Fuel_Price", "MarkDown1", "MarkDown2", "MarkDown3", "MarkDown4", "MarkDown5", "CPI", "Unemployment", "IsHoliday"}:
-            grupos["Promoções e contexto"].append(f)
-        elif f in {"Store", "Dept", "Size", "Type_A", "Type_B", "Type_C"}:
-            grupos["Estrutura da loja"].append(f)
-        else:
-            grupos["Outras"].append(f)
-
-    return grupos
-
-
 # =========================================================
-# CAMINHOS PADRÃO
+# CAMINHOS — BASE_DIR garante funcionar no Streamlit Cloud
 # =========================================================
 
-caminho_previsoes_padrao = primeiro_arquivo_existente(
-    [
-        "reports/batch_predictions.parquet",
-        "../reports/batch_predictions.parquet",
-        "/mnt/data/batch_predictions.parquet",
-    ]
-) or "reports/batch_predictions.parquet"
+def _resolver(candidatos: list[str]) -> Optional[str]:
+    """Tenta caminhos relativos ao repo root e ao CWD."""
+    for c in candidatos:
+        full = BASE_DIR / c
+        if full.exists():
+            return str(full)
+        if os.path.exists(c):
+            return c
+    return None
 
-caminho_importancia_padrao = primeiro_arquivo_existente(
-    [
-        "feature_importance.csv",
-        "reports/feature_importance.csv",
-        "/mnt/data/feature_importance.csv",
-    ]
-) or "feature_importance.csv"
 
-caminho_meta_yaml_padrao = primeiro_arquivo_existente(
-    [
-        "meta.yaml",
-        "/mnt/data/meta.yaml",
-    ]
-)
+caminho_previsoes_padrao = _resolver([
+    "reports/batch_predictions.parquet",
+    "artifacts/reports/valid_predictions.parquet",
+]) or str(BASE_DIR / "reports/batch_predictions.parquet")
 
-caminho_best_meta_json_padrao = primeiro_arquivo_existente(
-    [
-        "artifacts/models/best_model_meta.json",
-        "best_model_meta.json",
-        "/mnt/data/best_model_meta.json",
-    ]
-)
+caminho_best_meta_padrao = _resolver([
+    "artifacts/models/best_model_meta.json",
+    "best_model_meta.json",
+])
 
-caminho_preprocess_json_padrao = primeiro_arquivo_existente(
-    [
-        "preprocess.json",
-        "/mnt/data/preprocess.json",
-    ]
-)
+caminho_preprocess_padrao = _resolver([
+    "artifacts/preprocess.json",
+    "preprocess.json",
+])
 
-caminho_features_json_padrao = primeiro_arquivo_existente(
-    [
-        "features.json",
-        "/mnt/data/features.json",
-    ]
-)
+caminho_leaderboard_padrao = _resolver([
+    "artifacts/reports/leaderboard.csv",
+])
+
+_artif_fi_dir = BASE_DIR / "artifacts" / "feature_importance"
+_modelos_fi = sorted([
+    d for d in os.listdir(_artif_fi_dir)
+    if (_artif_fi_dir / d).is_dir()
+]) if _artif_fi_dir.exists() else []
+
 
 # =========================================================
 # SIDEBAR
 # =========================================================
 
-st.sidebar.markdown("## Forecast Intelligence")
-st.sidebar.caption("Painel executivo de previsão de vendas")
-
+st.sidebar.markdown("## Retail Forecast Intelligence")
+st.sidebar.caption("Dashboard executivo de previsão de vendas")
 st.sidebar.markdown("---")
-if _MLFLOW_AVAILABLE:
-    st.sidebar.markdown("### MLflow")
-    mlflow_uri = st.sidebar.text_input(
-        "Tracking URI",
-        value=os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns"),
-        help="file:./mlruns para local, http://... para servidor remoto.",
-    )
-else:
-    mlflow_uri = "file:./mlruns"
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Arquivos")
-caminho_previsoes = st.sidebar.text_input("Arquivo de previsões", value=caminho_previsoes_padrao)
-
-# Detecta modelos disponíveis em artifacts/feature_importance/
-_artif_fi_dir = os.path.join("artifacts", "feature_importance")
-_modelos_fi = sorted([
-    d for d in os.listdir(_artif_fi_dir)
-    if os.path.isdir(os.path.join(_artif_fi_dir, d))
-]) if os.path.exists(_artif_fi_dir) else []
+st.sidebar.markdown("### Arquivo de dados")
+caminho_previsoes = st.sidebar.text_input("Previsões", value=caminho_previsoes_padrao)
 
 if _modelos_fi:
     _modelo_fi_sel = st.sidebar.selectbox("Modelo (feature importance)", _modelos_fi)
-    caminho_importancia = os.path.join(_artif_fi_dir, _modelo_fi_sel, "feature_importance.csv")
+    caminho_importancia = str(_artif_fi_dir / _modelo_fi_sel / "feature_importance.csv")
 else:
-    caminho_importancia = st.sidebar.text_input("Arquivo de feature importance", value=caminho_importancia_padrao)
-
-if caminho_best_meta_json_padrao:
-    caminho_best_meta_json = st.sidebar.text_input("Arquivo best_model_meta.json", value=caminho_best_meta_json_padrao)
-else:
-    caminho_best_meta_json = st.sidebar.text_input("Arquivo best_model_meta.json", value="best_model_meta.json")
-
-if caminho_preprocess_json_padrao:
-    caminho_preprocess_json = st.sidebar.text_input("Arquivo preprocess.json", value=caminho_preprocess_json_padrao)
-else:
-    caminho_preprocess_json = st.sidebar.text_input("Arquivo preprocess.json", value="preprocess.json")
-
-if caminho_features_json_padrao:
-    caminho_features_json = st.sidebar.text_input("Arquivo features.json", value=caminho_features_json_padrao)
-else:
-    caminho_features_json = st.sidebar.text_input("Arquivo features.json", value="features.json")
-
-if caminho_meta_yaml_padrao:
-    caminho_meta_yaml = st.sidebar.text_input("Arquivo meta.yaml", value=caminho_meta_yaml_padrao)
-else:
-    caminho_meta_yaml = st.sidebar.text_input("Arquivo meta.yaml", value="meta.yaml")
+    caminho_importancia = _resolver(["feature_importance.csv"]) or "feature_importance.csv"
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### Premissas de negócio")
+st.sidebar.markdown("### Premissas financeiras")
+st.sidebar.caption("Definem como o erro do modelo é traduzido em impacto financeiro estimado.")
 
-taxa_margem_perdida = st.sidebar.slider(
-    "Margem perdida por subprevisão",
-    min_value=0.01,
-    max_value=1.00,
-    value=0.25,
-    step=0.01,
-)
+taxa_margem = st.sidebar.slider("Margem perdida por ruptura", 0.01, 1.00, 0.25, 0.01)
+taxa_excesso = st.sidebar.slider("Custo de excesso de estoque", 0.01, 1.00, 0.10, 0.01)
+taxa_ruptura = st.sidebar.slider("Penalidade operacional por ruptura", 0.00, 1.00, 0.08, 0.01)
 
-taxa_custo_excesso = st.sidebar.slider(
-    "Custo de excesso de estoque",
-    min_value=0.01,
-    max_value=1.00,
-    value=0.10,
-    step=0.01,
-)
-
-taxa_penalidade_ruptura = st.sidebar.slider(
-    "Penalidade operacional por ruptura",
-    min_value=0.00,
-    max_value=1.00,
-    value=0.08,
-    step=0.01,
-)
-
-st.sidebar.markdown("---")
-st.sidebar.caption(
-    "Essas premissas convertem o erro do modelo em impacto financeiro estimado."
-)
 
 # =========================================================
 # CARREGAMENTO EFETIVO
 # =========================================================
 
 if not os.path.exists(caminho_previsoes):
-    st.error(f"Arquivo de previsões não encontrado: {caminho_previsoes}")
+    st.error(f"Arquivo de previsões não encontrado: `{caminho_previsoes}`")
+    st.info("Verifique se o pipeline de inferência foi executado: `python -m flows.batch_inference_flow`")
     st.stop()
 
-df = carregar_previsoes(caminho_previsoes)
-df = calcular_impacto_negocio(
-    df,
-    taxa_margem_perdida=taxa_margem_perdida,
-    taxa_custo_excesso=taxa_custo_excesso,
-    taxa_penalidade_ruptura=taxa_penalidade_ruptura,
-)
+with st.spinner("Carregando dados..."):
+    df = carregar_previsoes(caminho_previsoes)
+    df = calcular_impacto(df, taxa_margem, taxa_excesso, taxa_ruptura)
 
 df_importancia = carregar_feature_importance(caminho_importancia)
-best_meta = carregar_json_se_existir(caminho_best_meta_json)
-preprocess_meta = carregar_json_se_existir(caminho_preprocess_json)
-features_meta = carregar_json_se_existir(caminho_features_json)
-meta_yaml = carregar_meta_yaml_simples(caminho_meta_yaml)
+best_meta = carregar_json(caminho_best_meta_padrao)
+preprocess_meta = carregar_json(caminho_preprocess_padrao)
 
 if df.empty:
-    st.warning("O arquivo de previsões foi carregado, mas não há dados disponíveis.")
+    st.warning("Arquivo carregado, mas sem dados disponíveis.")
     st.stop()
+
 
 # =========================================================
 # HERO
 # =========================================================
 
+best_model_nome = best_meta.get("best_model", "N/A").upper() if best_meta else "N/A"
+best_rmse_hero = best_meta.get("best_rmse", None) if best_meta else None
+
 st.markdown(
-    """
+    f"""
     <div class="hero-card">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:18px; flex-wrap:wrap;">
             <div>
                 <div style="font-size:2rem; font-weight:800;">Retail Forecast Intelligence</div>
                 <div class="mini-note" style="margin-top:8px;">
-                    Plataforma analítica para traduzir previsões em decisões comerciais, risco operacional e impacto financeiro.
+                    Plataforma de previsão de demanda para varejo — traduz previsões em decisões de estoque e impacto financeiro.
                 </div>
                 <div style="margin-top:12px;">
                     <span class="chip">Forecasting</span>
-                    <span class="chip">Negócio</span>
-                    <span class="chip">Interpretabilidade</span>
+                    <span class="chip">Gestão de Estoque</span>
+                    <span class="chip">Impacto Financeiro</span>
                     <span class="chip">MLOps</span>
                 </div>
             </div>
-            <div style="max-width:500px;">
-                <div style="font-size:1rem; font-weight:600;">Objetivo</div>
+            <div style="max-width:420px;">
+                <div style="font-size:1rem; font-weight:600;">Modelo ativo</div>
                 <div class="mini-note" style="margin-top:6px;">
-                    Mostrar o que foi previsto, o que ocorreu, onde o modelo falha mais e quanto esse desvio pode custar ao negócio.
+                    <b>{best_model_nome}</b> · RMSE {fmt_number(best_rmse_hero, 0) if best_rmse_hero else "N/A"}
+                    &nbsp;·&nbsp; Dataset Walmart · {len(df):,} registros de validação
                 </div>
             </div>
         </div>
@@ -762,1025 +507,653 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 # =========================================================
 # FILTROS GLOBAIS
 # =========================================================
 
-caixa_secao(
-    "Filtros globais",
-    "Use os filtros para analisar lojas, departamentos e períodos específicos com nomes amigáveis.",
-)
+caixa_secao("Filtros", "Selecione lojas, departamentos e período para detalhar a análise.")
 
 f1, f2, f3 = st.columns(3)
 df_filtrado = df.copy()
 
 if "Store_Label" in df_filtrado.columns:
     lojas = sorted(df_filtrado["Store_Label"].dropna().unique().tolist())
-    lojas_escolhidas = f1.multiselect("Loja", lojas, default=[])
-    if lojas_escolhidas:
-        df_filtrado = df_filtrado[df_filtrado["Store_Label"].isin(lojas_escolhidas)]
+    lojas_sel = f1.multiselect("Loja", lojas, default=[])
+    if lojas_sel:
+        df_filtrado = df_filtrado[df_filtrado["Store_Label"].isin(lojas_sel)]
 
 if "Dept_Label" in df_filtrado.columns:
     depts = sorted(df_filtrado["Dept_Label"].dropna().unique().tolist())
-    depts_escolhidos = f2.multiselect("Departamento", depts, default=[])
-    if depts_escolhidos:
-        df_filtrado = df_filtrado[df_filtrado["Dept_Label"].isin(depts_escolhidos)]
+    depts_sel = f2.multiselect("Departamento", depts, default=[])
+    if depts_sel:
+        df_filtrado = df_filtrado[df_filtrado["Dept_Label"].isin(depts_sel)]
 
 if "Date" in df_filtrado.columns and not df_filtrado["Date"].dropna().empty:
     data_min = df_filtrado["Date"].min().date()
     data_max = df_filtrado["Date"].max().date()
-
-    periodo = f3.date_input(
-        "Período",
-        value=(data_min, data_max),
-        min_value=data_min,
-        max_value=data_max,
-    )
-
+    periodo = f3.date_input("Período", value=(data_min, data_max), min_value=data_min, max_value=data_max)
     if isinstance(periodo, tuple) and len(periodo) == 2:
         inicio, fim = periodo
         df_filtrado = df_filtrado[
-            (df_filtrado["Date"].dt.date >= inicio)
-            & (df_filtrado["Date"].dt.date <= fim)
+            (df_filtrado["Date"].dt.date >= inicio) & (df_filtrado["Date"].dt.date <= fim)
         ]
 
 if df_filtrado.empty:
     st.warning("Os filtros aplicados não retornaram dados.")
     st.stop()
 
-# =========================================================
-# RESUMO E ESTRUTURAS DERIVADAS
-# =========================================================
-
-resumo = resumo_executivo(df_filtrado)
-status_label, status_desc = classificar_mape(resumo["mape"])
-ts = serie_temporal_agregada(df_filtrado)
+# Estruturas derivadas
+ts = serie_temporal(df_filtrado)
 anomalias = detectar_anomalias(df_filtrado)
 
-feature_names = []
-if isinstance(best_meta.get("features"), list):
-    feature_names = best_meta.get("features", [])
-elif isinstance(features_meta.get("features"), list):
-    feature_names = features_meta.get("features", [])
-elif isinstance(preprocess_meta.get("feature_columns"), list):
-    feature_names = preprocess_meta.get("feature_columns", [])
+mae = safe_mean(df_filtrado["erro_abs"]) if "erro_abs" in df_filtrado.columns else None
+smape = safe_mean(df_filtrado["erro_pct"]) if "erro_pct" in df_filtrado.columns else None
+receita_real = safe_sum(df_filtrado["Weekly_Sales"]) if "Weekly_Sales" in df_filtrado.columns else None
+receita_prev = safe_sum(df_filtrado["y_pred"]) if "y_pred" in df_filtrado.columns else None
+impacto_total = safe_sum(df_filtrado["impacto_total"]) if "impacto_total" in df_filtrado.columns else None
+vies = safe_mean(df_filtrado["erro"]) if "erro" in df_filtrado.columns else None
 
-grupos_features = categorizar_features(feature_names) if feature_names else {}
+status_label, status_classe, status_desc = classificar_smape(smape)
+n_lojas = int(df_filtrado["Store"].nunique()) if "Store" in df_filtrado.columns else 0
+n_depts = int(df_filtrado["Dept"].nunique()) if "Dept" in df_filtrado.columns else 0
 
-tabs = st.tabs(
-    [
-        "Resumo Executivo",
-        "Performance Comercial",
-        "Forecast Analysis",
-        "Impacto no Negócio",
-        "Store & Department Insights",
-        "Model Explainability",
-        "Model Leaderboard",
-        "Model Intelligence",
-        "Model Monitoring",
-        "Dados",
-    ]
-)
 
 # =========================================================
-# TAB 1 - RESUMO EXECUTIVO
+# TABS
+# =========================================================
+
+tabs = st.tabs([
+    "Visão Executiva",
+    "Risco Operacional",
+    "Forecast & Erros",
+    "Impacto Financeiro",
+    "Modelo",
+])
+
+
+# =========================================================
+# TAB 1 — VISÃO EXECUTIVA
 # =========================================================
 
 with tabs[0]:
     caixa_secao(
-        "Resumo executivo",
-        "Visão rápida para liderança: tamanho da operação, confiabilidade da previsão, impacto financeiro e status do modelo.",
+        "Visão executiva",
+        "KPIs principais para liderança: cobertura da operação, precisão da previsão e impacto financeiro estimado.",
     )
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(
-        card_kpi(
-            "Receita real",
-            fmt_money(resumo["receita_real"]),
-            "Total realizado no recorte filtrado.",
-        ),
-        unsafe_allow_html=True,
-    )
-    c2.markdown(
-        card_kpi(
-            "Receita prevista",
-            fmt_money(resumo["receita_prevista"]),
-            "Total projetado pelo modelo.",
-        ),
-        unsafe_allow_html=True,
-    )
-    c3.markdown(
-        card_kpi(
-            "Erro absoluto total",
-            fmt_money(resumo["erro_total"]),
-            "Diferença agregada entre previsto e realizado.",
-        ),
-        unsafe_allow_html=True,
-    )
-    c4.markdown(
-        card_kpi(
-            "Impacto financeiro",
-            fmt_money(resumo["impacto_total"]),
-            "Estimativa baseada em ruptura e excesso de estoque.",
-        ),
-        unsafe_allow_html=True,
-    )
+    c1.markdown(card_kpi("Receita real", fmt_money(receita_real), f"{n_lojas} lojas · {n_depts} departamentos"), unsafe_allow_html=True)
+    c2.markdown(card_kpi("Receita prevista", fmt_money(receita_prev), "Total projetado pelo modelo no período."), unsafe_allow_html=True)
+    c3.markdown(card_kpi("SMAPE", fmt_pct(smape), "Erro percentual médio — benchmark de mercado é 10–30%."), unsafe_allow_html=True)
+    c4.markdown(card_kpi("Impacto estimado", fmt_money(impacto_total), "Custo de ruptura + excesso estimado pelo modelo."), unsafe_allow_html=True)
 
-    c5, c6, c7, c8 = st.columns(4)
-    c5.markdown(
-        card_kpi(
-            "MAE",
-            fmt_number(resumo["mae"]),
-            "Erro médio absoluto. Quanto menor, melhor.",
-        ),
-        unsafe_allow_html=True,
-    )
-    c6.markdown(
-        card_kpi(
-            "MAPE",
-            fmt_pct(resumo["mape"]),
-            "Erro percentual médio em linguagem de negócio.",
-        ),
-        unsafe_allow_html=True,
-    )
-    c7.markdown(
-        card_kpi(
-            "Cobertura",
-            f"{resumo['lojas']} lojas / {resumo['departamentos']} departamentos",
-            "Escopo do recorte analisado.",
-        ),
-        unsafe_allow_html=True,
-    )
-    c8.markdown(
-        card_kpi(
-            "Status executivo",
-            status_label,
-            status_desc,
-        ),
-        unsafe_allow_html=True,
-    )
+    st.markdown("")
 
-    col1, col2 = st.columns([1.7, 1])
+    # Status e viés
+    col_status, col_vies = st.columns(2)
+    with col_status:
+        st.markdown(
+            f"""<div class="{status_classe}"><b>{status_label}</b><br>{status_desc}</div>""",
+            unsafe_allow_html=True,
+        )
+    with col_vies:
+        if vies is not None and not pd.isna(vies):
+            if vies > 50:
+                msg_vies = f"<b>⚠️ Tendência a subprever</b> (viés médio: +{fmt_money(vies)})<br>O modelo tende a estimar menos do que a demanda real — risco de ruptura de estoque."
+                classe_vies = "alert-yellow"
+            elif vies < -50:
+                msg_vies = f"<b>⚠️ Tendência a superprever</b> (viés médio: {fmt_money(vies)})<br>O modelo tende a estimar mais do que a demanda real — risco de excesso de estoque."
+                classe_vies = "alert-yellow"
+            else:
+                msg_vies = f"<b>✓ Modelo equilibrado</b> (viés médio: {fmt_money(vies)})<br>Sem tendência sistemática de erro — bom para decisões de reposição."
+                classe_vies = "alert-green"
+            st.markdown(f"""<div class="{classe_vies}">{msg_vies}</div>""", unsafe_allow_html=True)
 
-    with col1:
+    st.markdown("---")
+
+    # Gráfico principal: Receita real vs prevista
+    col_chart, col_insight = st.columns([2, 1])
+
+    with col_chart:
         st.markdown("### Receita real vs prevista")
-        st.caption("Mostra se o modelo acompanha a trajetória da demanda ao longo do tempo.")
-
+        st.caption("Acompanha se o modelo segue a trajetória da demanda ao longo do tempo.")
         if not ts.empty:
             fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=ts["Date"],
-                    y=ts["Weekly_Sales"],
-                    mode="lines",
-                    name="Receita real",
-                    line=dict(width=3),
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=ts["Date"],
-                    y=ts["y_pred"],
-                    mode="lines",
-                    name="Receita prevista",
-                    line=dict(width=3, dash="dash"),
-                )
-            )
+            fig.add_trace(go.Scatter(x=ts["Date"], y=ts["Weekly_Sales"], mode="lines", name="Real", line=dict(width=3, color="#3b82f6")))
+            fig.add_trace(go.Scatter(x=ts["Date"], y=ts["y_pred"], mode="lines", name="Previsto", line=dict(width=2, dash="dash", color="#10b981")))
             fig.update_layout(
-                height=430,
+                height=400,
                 margin=dict(l=10, r=10, t=25, b=10),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(255,255,255,0.02)",
                 xaxis_title="Data",
-                yaxis_title="Vendas",
+                yaxis_title="Vendas (USD)",
                 legend_title="Série",
+                xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
             )
             st.plotly_chart(fig, use_container_width=True)
 
-    with col2:
-        st.markdown("### Insight executivo")
-        st.markdown(
-            f"""
-            <div class="info-box">
-                <b>Leitura principal</b><br><br>
-                {gerar_insight_executivo(df_filtrado)}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        if resumo["data_inicio"] is not None and resumo["data_fim"] is not None:
-            st.caption(
-                f"Período analisado: {resumo['data_inicio'].date()} até {resumo['data_fim'].date()}"
-            )
+    with col_insight:
+        st.markdown("### Resumo do período")
+        if receita_real and receita_prev:
+            delta_pct = ((receita_prev - receita_real) / receita_real) * 100
+            st.metric("Receita real", fmt_money(receita_real))
+            st.metric("Receita prevista", fmt_money(receita_prev), delta=f"{delta_pct:+.1f}%")
+        st.metric("MAE médio", fmt_money(mae))
 
         if not anomalias.empty:
             st.markdown(
-                f"""
-                <div class="warn-box">
-                    <b>Atenção</b><br>
-                    Foram detectados <b>{len(anomalias)}</b> registros com erro atípico no recorte atual.
-                </div>
-                """,
+                f"""<div class="alert-yellow"><b>⚠️ {len(anomalias)} registros anômalos</b><br>
+                Desvios atípicos detectados no recorte atual. Verifique a aba Risco Operacional.</div>""",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                """<div class="alert-green"><b>✓ Sem anomalias detectadas</b><br>Nenhum desvio atípico no recorte atual.</div>""",
                 unsafe_allow_html=True,
             )
 
+
 # =========================================================
-# TAB 2 - PERFORMANCE COMERCIAL
+# TAB 2 — RISCO OPERACIONAL
 # =========================================================
 
 with tabs[1]:
     caixa_secao(
-        "Performance comercial",
-        "Leitura do comportamento de vendas, crescimento e concentração de receita.",
+        "Risco operacional",
+        "Identifica onde o modelo erra mais — prioriza lojas e departamentos que precisam de atenção.",
     )
 
-    a, b = st.columns(2)
+    r1, r2 = st.columns(2)
 
-    with a:
-        st.markdown("### Receita por loja")
-        st.caption("Mostra concentração de vendas por loja.")
-
-        if "Store_Label" in df.columns:
-            receita_loja = (
-                df.groupby("Store_Label", as_index=False)["Weekly_Sales"]
-                .sum()
-                .sort_values("Weekly_Sales", ascending=False)
+    with r1:
+        st.markdown("### Top lojas por impacto financeiro")
+        st.caption("Quanto maior a barra, maior o custo estimado de erros de previsão nessa loja.")
+        if "Store_Label" in df_filtrado.columns and "impacto_total" in df_filtrado.columns:
+            top_lojas = (
+                df_filtrado.groupby("Store_Label", as_index=False)
+                .agg(impacto=("impacto_total", "sum"), mae=("erro_abs", "mean"), receita=("Weekly_Sales", "sum"))
+                .sort_values("impacto", ascending=False)
+                .head(15)
             )
-
-            fig_loja = px.bar(
-                receita_loja.head(15),
-                x="Store_Label",
-                y="Weekly_Sales",
-            )
-            fig_loja.update_layout(
-                height=400,
-                margin=dict(l=10, r=10, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Loja",
-                yaxis_title="Receita",
-            )
-            st.plotly_chart(fig_loja, use_container_width=True)
-
-    with b:
-        st.markdown("### Receita por departamento")
-        st.caption("Identifica categorias com maior peso comercial.")
-
-        if "Dept_Label" in df.columns:
-            receita_dept = (
-                df.groupby("Dept_Label", as_index=False)["Weekly_Sales"]
-                .sum()
-                .sort_values("Weekly_Sales", ascending=False)
-            )
-
-            fig_dept = px.bar(
-                receita_dept.head(15),
-                x="Dept_Label",
-                y="Weekly_Sales",
-            )
-            fig_dept.update_layout(
-                height=400,
-                margin=dict(l=10, r=10, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Departamento",
-                yaxis_title="Receita",
-            )
-            st.plotly_chart(fig_dept, use_container_width=True)
-
-    c, d = st.columns(2)
-
-    with c:
-        st.markdown("### Distribuição de vendas")
-        st.caption("Mostra dispersão dos valores de venda no recorte atual.")
-
-        fig_hist_vendas = px.histogram(
-            df_filtrado,
-            x="Weekly_Sales",
-            nbins=45,
-            color_discrete_sequence=["#3b82f6"],
-        )
-        fig_hist_vendas.update_layout(
-            height=380,
-            margin=dict(l=10, r=10, t=20, b=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(255,255,255,0.02)",
-            xaxis_title="Weekly Sales",
-            yaxis_title="Frequência",
-        )
-        st.plotly_chart(fig_hist_vendas, use_container_width=True)
-
-    with d:
-        st.markdown("### Crescimento semanal")
-        st.caption("Mede aceleração ou desaceleração da receita ao longo do tempo.")
-
-        if not ts.empty and "crescimento_semanal" in ts.columns:
-            fig_growth = px.bar(
-                ts,
-                x="Date",
-                y="crescimento_semanal",
-            )
-            fig_growth.update_layout(
-                height=380,
-                margin=dict(l=10, r=10, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Data",
-                yaxis_title="Crescimento semanal",
-            )
-            st.plotly_chart(fig_growth, use_container_width=True)
-
-# =========================================================
-# TAB 3 - FORECAST ANALYSIS
-# =========================================================
-
-with tabs[2]:
-    caixa_secao(
-        "Forecast analysis",
-        "Análise da precisão, viés e estabilidade do erro do modelo.",
-    )
-
-    x1, x2 = st.columns(2)
-
-    with x1:
-        st.markdown("### Erro ao longo do tempo")
-        st.caption("Ajuda a identificar períodos em que o modelo falha mais.")
-
-        if not ts.empty and "erro_abs" in ts.columns:
-            fig_erro_tempo = px.line(
-                ts,
-                x="Date",
-                y="erro_abs",
-                markers=True,
-            )
-            fig_erro_tempo.update_layout(
-                height=380,
-                margin=dict(l=10, r=10, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Data",
-                yaxis_title="Erro absoluto",
-            )
-            st.plotly_chart(fig_erro_tempo, use_container_width=True)
-
-    with x2:
-        st.markdown("### Distribuição do erro")
-        st.caption("Mostra se o modelo tende a superprever ou subprever.")
-
-        fig_hist_erro = px.histogram(
-            df_filtrado,
-            x="erro",
-            nbins=45,
-        )
-        fig_hist_erro.update_layout(
-            height=380,
-            margin=dict(l=10, r=10, t=20, b=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(255,255,255,0.02)",
-            xaxis_title="Erro",
-            yaxis_title="Frequência",
-        )
-        st.plotly_chart(fig_hist_erro, use_container_width=True)
-
-    viés = safe_mean(df_filtrado["erro"]) if "erro" in df_filtrado.columns else None
-    if viés is not None and not pd.isna(viés):
-        if viés > 0:
-            msg_vies = "O modelo tende a subprever a demanda, elevando risco de ruptura."
-        elif viés < 0:
-            msg_vies = "O modelo tende a superprever a demanda, elevando risco de excesso de estoque."
-        else:
-            msg_vies = "O modelo está próximo de neutro em média."
-
-        st.markdown(
-            f"""
-            <div class="info-box">
-                <b>Diagnóstico de viés</b><br>
-                {msg_vies}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-# =========================================================
-# TAB 4 - IMPACTO NO NEGÓCIO
-# =========================================================
-
-with tabs[3]:
-    caixa_secao(
-        "Impacto no negócio",
-        "Tradução do erro do modelo para linguagem financeira e operacional.",
-    )
-
-    perda_venda = safe_sum(df_filtrado["perda_venda_estimada"]) if "perda_venda_estimada" in df_filtrado.columns else None
-    custo_excesso = safe_sum(df_filtrado["custo_excesso_estocado"]) if "custo_excesso_estocado" in df_filtrado.columns else None
-    penalidade = safe_sum(df_filtrado["penalidade_ruptura"]) if "penalidade_ruptura" in df_filtrado.columns else None
-    impacto = safe_sum(df_filtrado["impacto_total_estimado"]) if "impacto_total_estimado" in df_filtrado.columns else None
-
-    i1, i2, i3, i4 = st.columns(4)
-    i1.metric("Impacto total", fmt_money(impacto))
-    i2.metric("Perda por subprevisão", fmt_money(perda_venda))
-    i3.metric("Custo por superprevisão", fmt_money(custo_excesso))
-    i4.metric("Penalidade por ruptura", fmt_money(penalidade))
-
-    p1, p2 = st.columns(2)
-
-    with p1:
-        st.markdown("### Composição do impacto")
-        st.caption("Divide o impacto entre venda perdida, excesso e penalidade operacional.")
-
-        impacto_df = pd.DataFrame(
-            {
-                "categoria": [
-                    "Perda por subprevisão",
-                    "Custo por superprevisão",
-                    "Penalidade por ruptura",
-                ],
-                "valor": [
-                    perda_venda or 0.0,
-                    custo_excesso or 0.0,
-                    penalidade or 0.0,
-                ],
-            }
-        )
-
-        fig_pie = px.pie(
-            impacto_df,
-            names="categoria",
-            values="valor",
-            hole=0.55,
-        )
-        fig_pie.update_layout(
-            height=400,
-            margin=dict(l=10, r=10, t=20, b=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-        )
-        st.plotly_chart(fig_pie, use_container_width=True)
-
-    with p2:
-        st.markdown("### Impacto ao longo do tempo")
-        st.caption("Mostra em quais semanas o erro gerou maior pressão financeira.")
-
-        if not ts.empty and "impacto_total_estimado" in ts.columns:
-            fig_impacto_tempo = px.bar(
-                ts,
-                x="Date",
-                y="impacto_total_estimado",
-            )
-            fig_impacto_tempo.update_layout(
-                height=400,
-                margin=dict(l=10, r=10, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Data",
-                yaxis_title="Impacto estimado",
-            )
-            st.plotly_chart(fig_impacto_tempo, use_container_width=True)
-
-# =========================================================
-# TAB 5 - STORE & DEPARTMENT INSIGHTS
-# =========================================================
-
-with tabs[4]:
-    caixa_secao(
-        "Store & Department insights",
-        "Identificação de bolsões de risco e oportunidades por loja e departamento.",
-    )
-
-    s1, s2 = st.columns(2)
-
-    with s1:
-        st.markdown("### Top lojas por impacto")
-        st.caption("Prioriza onde agir primeiro na operação.")
-
-        if "Store_Label" in df_filtrado.columns:
-            top_lojas = top_impacto_por_dimensao(df_filtrado, "Store_Label", top_n=10)
             if not top_lojas.empty:
-                fig_top_lojas = px.bar(
+                fig_lojas = px.bar(
                     top_lojas.sort_values("impacto", ascending=True),
-                    x="impacto",
-                    y="Store_Label",
-                    orientation="h",
+                    x="impacto", y="Store_Label", orientation="h",
+                    color="mae",
+                    color_continuous_scale="Reds",
+                    labels={"impacto": "Impacto estimado (USD)", "Store_Label": "Loja", "mae": "MAE médio"},
                 )
-                fig_top_lojas.update_layout(
-                    height=420,
-                    margin=dict(l=10, r=10, t=20, b=10),
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(255,255,255,0.02)",
-                    xaxis_title="Impacto estimado",
-                    yaxis_title="Loja",
+                fig_lojas.update_layout(
+                    height=460, margin=dict(l=10, r=10, t=20, b=10),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)",
+                    coloraxis_showscale=False,
                 )
-                st.plotly_chart(fig_top_lojas, use_container_width=True)
+                st.plotly_chart(fig_lojas, use_container_width=True)
 
-    with s2:
-        st.markdown("### Top departamentos por impacto")
-        st.caption("Mostra onde o ganho de melhoria tende a ser maior.")
-
-        if "Dept_Label" in df_filtrado.columns:
-            top_depts = top_impacto_por_dimensao(df_filtrado, "Dept_Label", top_n=10)
+    with r2:
+        st.markdown("### Top departamentos por impacto financeiro")
+        st.caption("Departamentos com maior distorção entre previsto e real acumulam mais custo operacional.")
+        if "Dept_Label" in df_filtrado.columns and "impacto_total" in df_filtrado.columns:
+            top_depts = (
+                df_filtrado.groupby("Dept_Label", as_index=False)
+                .agg(impacto=("impacto_total", "sum"), mae=("erro_abs", "mean"), receita=("Weekly_Sales", "sum"))
+                .sort_values("impacto", ascending=False)
+                .head(15)
+            )
             if not top_depts.empty:
-                fig_top_depts = px.bar(
+                fig_depts = px.bar(
                     top_depts.sort_values("impacto", ascending=True),
-                    x="impacto",
-                    y="Dept_Label",
-                    orientation="h",
+                    x="impacto", y="Dept_Label", orientation="h",
+                    color="mae",
+                    color_continuous_scale="Oranges",
+                    labels={"impacto": "Impacto estimado (USD)", "Dept_Label": "Departamento", "mae": "MAE médio"},
                 )
-                fig_top_depts.update_layout(
-                    height=420,
-                    margin=dict(l=10, r=10, t=20, b=10),
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(255,255,255,0.02)",
-                    xaxis_title="Impacto estimado",
-                    yaxis_title="Departamento",
+                fig_depts.update_layout(
+                    height=460, margin=dict(l=10, r=10, t=20, b=10),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)",
+                    coloraxis_showscale=False,
                 )
-                st.plotly_chart(fig_top_depts, use_container_width=True)
+                st.plotly_chart(fig_depts, use_container_width=True)
 
-    st.markdown("### Heatmap loja × departamento")
-    st.caption("Quanto mais intenso o bloco, maior o erro médio naquele cruzamento.")
+    # Heatmap
+    st.markdown("### Mapa de calor — erro médio por loja × departamento")
+    st.caption("Blocos mais escuros indicam combinações loja/departamento com maior erro de previsão. Use para priorizar onde ajustar o modelo ou reforçar o processo de reposição.")
 
     if {"Store_Label", "Dept_Label", "erro_abs"}.issubset(df_filtrado.columns):
-        heatmap = df_filtrado.pivot_table(
+        heatmap_df = df_filtrado.copy()
+        heatmap = heatmap_df.pivot_table(
             values="erro_abs",
             index="Store_Label",
             columns="Dept_Label",
             aggfunc="mean",
         )
-
         if not heatmap.empty:
             fig_heat = px.imshow(
                 heatmap,
                 x=heatmap.columns.tolist(),
                 y=heatmap.index.tolist(),
+                color_continuous_scale="Blues",
                 aspect="auto",
+                labels={"color": "MAE médio", "x": "Departamento", "y": "Loja"},
             )
             fig_heat.update_layout(
-                height=560,
+                height=max(400, len(heatmap.index) * 22),
                 margin=dict(l=10, r=10, t=20, b=10),
                 paper_bgcolor="rgba(0,0,0,0)",
             )
             st.plotly_chart(fig_heat, use_container_width=True)
+        else:
+            st.info("Dados insuficientes para gerar o heatmap com os filtros atuais.")
+
+    # Registros anômalos
+    if not anomalias.empty:
+        with st.expander(f"⚠️ Ver {len(anomalias)} registros anômalos detectados"):
+            cols_show = [c for c in ["Store_Label", "Dept_Label", "Date", "Weekly_Sales", "y_pred", "erro_abs"] if c in anomalias.columns]
+            st.dataframe(
+                anomalias[cols_show].sort_values("erro_abs", ascending=False).head(30),
+                use_container_width=True,
+            )
+
 
 # =========================================================
-# TAB 6 - MODEL EXPLAINABILITY
+# TAB 3 — FORECAST & ERROS
 # =========================================================
 
-with tabs[5]:
+with tabs[2]:
     caixa_secao(
-        "Model explainability",
-        "Explica quais variáveis mais influenciam a previsão.",
+        "Forecast & Erros",
+        "Analisa a qualidade da previsão ao longo do tempo e a distribuição dos erros.",
     )
 
-    if not df_importancia.empty:
-        e1, e2 = st.columns([1.1, 0.9])
+    g1, g2 = st.columns(2)
 
-        with e1:
-            st.markdown("### Feature importance")
-            st.caption("Principais direcionadores do comportamento do modelo.")
-
-            top_imp = df_importancia.head(20).sort_values("importance", ascending=True)
-
-            fig_imp = px.bar(
-                top_imp,
-                x="importance",
-                y="feature",
-                orientation="h",
+    with g1:
+        st.markdown("### Erro absoluto ao longo do tempo")
+        st.caption("Identifica períodos em que o modelo falha mais — picos podem indicar sazonalidade não capturada.")
+        if not ts.empty and "erro_abs" in ts.columns:
+            fig_erro_tempo = px.area(
+                ts, x="Date", y="erro_abs",
+                color_discrete_sequence=["#f59e0b"],
             )
-            fig_imp.update_layout(
-                height=580,
+            fig_erro_tempo.update_layout(
+                height=360,
                 margin=dict(l=10, r=10, t=20, b=10),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Importância",
-                yaxis_title="Variável",
+                xaxis_title="Data",
+                yaxis_title="Erro absoluto médio (USD)",
+                xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+                showlegend=False,
             )
-            st.plotly_chart(fig_imp, use_container_width=True)
+            st.plotly_chart(fig_erro_tempo, use_container_width=True)
 
-        with e2:
-            st.markdown("### Leitura de negócio")
+    with g2:
+        st.markdown("### Distribuição do erro")
+        st.caption("Erro centrado em zero indica modelo equilibrado. Assimetria indica viés sistemático.")
+        if "erro" in df_filtrado.columns:
+            fig_hist_erro = px.histogram(
+                df_filtrado, x="erro", nbins=50,
+                color_discrete_sequence=["#3b82f6"],
+            )
+            fig_hist_erro.add_vline(x=0, line_dash="dash", line_color="rgba(255,255,255,0.4)")
+            fig_hist_erro.update_layout(
+                height=360,
+                margin=dict(l=10, r=10, t=20, b=10),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(255,255,255,0.02)",
+                xaxis_title="Erro (Real − Previsto)",
+                yaxis_title="Frequência",
+                xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+            )
+            st.plotly_chart(fig_hist_erro, use_container_width=True)
+
+    g3, g4 = st.columns(2)
+
+    with g3:
+        st.markdown("### Distribuição de vendas reais")
+        st.caption("Mostra a dispersão dos valores de venda no recorte atual.")
+        if "Weekly_Sales" in df_filtrado.columns:
+            fig_hist_vendas = px.histogram(
+                df_filtrado, x="Weekly_Sales", nbins=45,
+                color_discrete_sequence=["#10b981"],
+            )
+            fig_hist_vendas.update_layout(
+                height=340,
+                margin=dict(l=10, r=10, t=20, b=10),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(255,255,255,0.02)",
+                xaxis_title="Vendas semanais (USD)",
+                yaxis_title="Frequência",
+                xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+            )
+            st.plotly_chart(fig_hist_vendas, use_container_width=True)
+
+    with g4:
+        st.markdown("### Real vs Previsto por registro")
+        st.caption("Pontos próximos da diagonal indicam boa previsão. Desvios indicam onde o modelo falha.")
+        if {"Weekly_Sales", "y_pred"}.issubset(df_filtrado.columns):
+            sample = df_filtrado.sample(min(2000, len(df_filtrado)), random_state=42)
+            fig_scatter = px.scatter(
+                sample, x="Weekly_Sales", y="y_pred",
+                color="erro_abs" if "erro_abs" in sample.columns else None,
+                color_continuous_scale="RdYlGn_r",
+                opacity=0.5,
+                labels={"Weekly_Sales": "Real (USD)", "y_pred": "Previsto (USD)", "erro_abs": "Erro abs"},
+            )
+            # Linha diagonal perfeita
+            max_val = max(sample["Weekly_Sales"].max(), sample["y_pred"].max())
+            fig_scatter.add_shape(type="line", x0=0, y0=0, x1=max_val, y1=max_val,
+                                  line=dict(color="rgba(255,255,255,0.25)", dash="dash"))
+            fig_scatter.update_layout(
+                height=340,
+                margin=dict(l=10, r=10, t=20, b=10),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(255,255,255,0.02)",
+                coloraxis_showscale=False,
+            )
+            st.plotly_chart(fig_scatter, use_container_width=True)
+
+
+# =========================================================
+# TAB 4 — IMPACTO FINANCEIRO
+# =========================================================
+
+with tabs[3]:
+    caixa_secao(
+        "Impacto financeiro",
+        "Traduz o erro do modelo em custo estimado de ruptura e excesso de estoque.",
+    )
+
+    perda_venda = safe_sum(df_filtrado["perda_venda"]) if "perda_venda" in df_filtrado.columns else None
+    custo_excesso = safe_sum(df_filtrado["custo_excesso"]) if "custo_excesso" in df_filtrado.columns else None
+    penalidade = safe_sum(df_filtrado["penalidade_ruptura"]) if "penalidade_ruptura" in df_filtrado.columns else None
+
+    i1, i2, i3, i4 = st.columns(4)
+    i1.markdown(card_kpi("Impacto total estimado", fmt_money(impacto_total), "Custo combinado de ruptura e excesso."), unsafe_allow_html=True)
+    i2.markdown(card_kpi("Perda por subprevisão", fmt_money(perda_venda), "Receita perdida quando o modelo previu menos do que a demanda."), unsafe_allow_html=True)
+    i3.markdown(card_kpi("Custo de excesso", fmt_money(custo_excesso), "Custo de estoque parado quando o modelo superestimou a demanda."), unsafe_allow_html=True)
+    i4.markdown(card_kpi("Penalidade por ruptura", fmt_money(penalidade), "Custo operacional de rupturas (logística, emergências)."), unsafe_allow_html=True)
+
+    st.markdown("")
+
+    fi1, fi2 = st.columns(2)
+
+    with fi1:
+        st.markdown("### Composição do impacto")
+        st.caption("Ruptura (subprevisão) tende a ser mais cara que excesso — ajuste as premissas na barra lateral.")
+        if perda_venda is not None:
+            impacto_comp = pd.DataFrame({
+                "Tipo": ["Perda por subprevisão", "Custo de excesso", "Penalidade por ruptura"],
+                "Valor": [perda_venda or 0, custo_excesso or 0, penalidade or 0],
+            })
+            fig_pie = px.pie(
+                impacto_comp, names="Tipo", values="Valor",
+                hole=0.55,
+                color_discrete_sequence=["#ef4444", "#f59e0b", "#3b82f6"],
+            )
+            fig_pie.update_layout(
+                height=380,
+                margin=dict(l=10, r=10, t=20, b=10),
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+    with fi2:
+        st.markdown("### Impacto acumulado no tempo")
+        st.caption("Semanas com maior pico de impacto indicam onde o modelo precisa de atenção.")
+        if not ts.empty and "impacto_total" in ts.columns:
+            fig_impact_time = px.bar(
+                ts, x="Date", y="impacto_total",
+                color_discrete_sequence=["#ef4444"],
+            )
+            fig_impact_time.update_layout(
+                height=380,
+                margin=dict(l=10, r=10, t=20, b=10),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(255,255,255,0.02)",
+                xaxis_title="Data",
+                yaxis_title="Impacto estimado (USD)",
+                xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+            )
+            st.plotly_chart(fig_impact_time, use_container_width=True)
+
+    # Tabela de maiores impactos
+    st.markdown("### Maiores impactos por loja × departamento")
+    st.caption("Prioridade de ação: onde reduzir erro tem maior retorno financeiro.")
+    if {"Store_Label", "Dept_Label", "impacto_total", "erro_abs", "Weekly_Sales"}.issubset(df_filtrado.columns):
+        tabela_impacto = (
+            df_filtrado.groupby(["Store_Label", "Dept_Label"], as_index=False)
+            .agg(
+                Receita_Real=("Weekly_Sales", "sum"),
+                MAE=("erro_abs", "mean"),
+                Impacto_Estimado=("impacto_total", "sum"),
+            )
+            .sort_values("Impacto_Estimado", ascending=False)
+            .head(20)
+        )
+        tabela_impacto["Receita_Real"] = tabela_impacto["Receita_Real"].map("${:,.0f}".format)
+        tabela_impacto["MAE"] = tabela_impacto["MAE"].map("${:,.0f}".format)
+        tabela_impacto["Impacto_Estimado"] = tabela_impacto["Impacto_Estimado"].map("${:,.0f}".format)
+        tabela_impacto.columns = ["Loja", "Departamento", "Receita Real", "MAE", "Impacto Estimado"]
+        st.dataframe(tabela_impacto, use_container_width=True)
+
+
+# =========================================================
+# TAB 5 — MODELO
+# =========================================================
+
+with tabs[4]:
+    caixa_secao(
+        "Modelo",
+        "Performance técnica, importância de variáveis e monitoramento do modelo em produção.",
+    )
+
+    m_tabs = st.tabs(["Leaderboard", "Feature Importance", "Monitoramento", "Pipeline"])
+
+    # --- Leaderboard ---
+    with m_tabs[0]:
+        st.markdown("### Comparativo de modelos")
+        st.caption("Modelo vencedor por menor RMSE — treinado com rolling time series CV (sem data leakage).")
+
+        _CORES = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#a855f7"]
+
+        _lb_df = pd.DataFrame()
+
+        # Tenta MLflow
+        if _MLFLOW_AVAILABLE:
+            try:
+                mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", f"file:{BASE_DIR}/mlruns"))
+                _client = MlflowClient()
+                _exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "forecast_estoque_walmart")
+                _exp = _client.get_experiment_by_name(_exp_name)
+                if _exp:
+                    _parent_runs = _client.search_runs(
+                        experiment_ids=[_exp.experiment_id],
+                        filter_string="tags.`mlflow.runName` = 'train_compare'",
+                        order_by=["start_time DESC"],
+                        max_results=5,
+                    )
+                    if _parent_runs:
+                        _child_runs = _client.search_runs(
+                            experiment_ids=[_exp.experiment_id],
+                            filter_string=f"tags.`mlflow.parentRunId` = '{_parent_runs[0].info.run_id}'",
+                        )
+                        if _child_runs:
+                            _rows = []
+                            for _r in _child_runs:
+                                _rmse = _r.data.metrics.get("rmse") or _r.data.metrics.get("RMSE")
+                                _mae = _r.data.metrics.get("mae") or _r.data.metrics.get("MAE")
+                                _smape = _r.data.metrics.get("smape") or _r.data.metrics.get("SMAPE")
+                                _rows.append({
+                                    "Modelo": _r.data.tags.get("mlflow.runName", _r.info.run_id[:8]),
+                                    "RMSE": float(_rmse) if _rmse else None,
+                                    "MAE": float(_mae) if _mae else None,
+                                    "SMAPE (%)": float(_smape) if _smape else None,
+                                })
+                            _lb_df = pd.DataFrame(_rows)
+                            if _lb_df["RMSE"].isna().all():
+                                _lb_df = pd.DataFrame()
+                            else:
+                                _lb_df = _lb_df.sort_values("RMSE").reset_index(drop=True)
+            except Exception:
+                _lb_df = pd.DataFrame()
+
+        # Fallback: CSV
+        if _lb_df.empty and caminho_leaderboard_padrao:
+            try:
+                _lb_df = pd.read_csv(caminho_leaderboard_padrao)
+                _col_map = {"model": "Modelo", "rmse": "RMSE", "mae": "MAE", "smape": "SMAPE (%)"}
+                _lb_df = _lb_df.rename(columns={k: v for k, v in _col_map.items() if k in _lb_df.columns})
+                _display = [c for c in ["Modelo", "RMSE", "MAE", "SMAPE (%)"] if c in _lb_df.columns]
+                _lb_df = _lb_df[_display].sort_values("RMSE").reset_index(drop=True)
+            except Exception:
+                _lb_df = pd.DataFrame()
+
+        if not _lb_df.empty:
+            st.dataframe(_lb_df, use_container_width=True)
+
+            _l1, _l2, _l3 = st.columns(3)
+            for _col_widget, _metric, _title in [(_l1, "RMSE", "RMSE por modelo"), (_l2, "MAE", "MAE por modelo"), (_l3, "SMAPE (%)", "SMAPE por modelo")]:
+                if _metric in _lb_df.columns and _lb_df[_metric].notna().any():
+                    with _col_widget:
+                        _fig = px.bar(
+                            _lb_df.dropna(subset=[_metric]).sort_values(_metric),
+                            x="Modelo", y=_metric,
+                            color="Modelo",
+                            color_discrete_sequence=_CORES,
+                            title=_title,
+                        )
+                        _fig.update_layout(
+                            height=320, showlegend=False,
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(255,255,255,0.02)",
+                            yaxis=dict(rangemode="tozero", gridcolor="rgba(255,255,255,0.05)"),
+                        )
+                        st.plotly_chart(_fig, use_container_width=True)
+
+            _best = _lb_df.iloc[0]
             st.markdown(
-                """
-                <div class="info-box">
-                    <b>Como explicar para a área comercial</b><br><br>
-                    As variáveis no topo do ranking são as que mais influenciam a previsão.
-                    Em forecasting de varejo, o histórico recente de vendas e medidas de tendência
-                    costumam pesar mais do que variáveis macroeconômicas.<br><br>
-                    Isso indica que a demanda tende a ser explicada principalmente pelo comportamento
-                    recente da própria série.
-                </div>
-                """,
+                f"""<div class="alert-green"><b>Melhor modelo: {_best.get('Modelo', 'N/A')}</b><br>
+                RMSE = {fmt_number(_best.get('RMSE'))} &nbsp;|&nbsp;
+                MAE = {fmt_number(_best.get('MAE'))} &nbsp;|&nbsp;
+                SMAPE = {fmt_pct(_best.get('SMAPE (%)'))}
+                </div>""",
                 unsafe_allow_html=True,
             )
+        else:
+            st.info("Leaderboard não disponível. Execute o pipeline de treinamento para gerar os resultados.")
 
-            st.markdown("#### Principais mensagens")
+    # --- Feature Importance ---
+    with m_tabs[1]:
+        st.markdown("### Variáveis mais importantes para a previsão")
+        st.caption("Mostra quais features o modelo mais usa para gerar as previsões.")
+
+        if not df_importancia.empty:
+            top_feats = df_importancia.head(20)
+            fig_fi = px.bar(
+                top_feats.sort_values("importance", ascending=True),
+                x="importance", y="feature", orientation="h",
+                color="importance",
+                color_continuous_scale="Blues",
+                labels={"importance": "Importância", "feature": "Variável"},
+            )
+            fig_fi.update_layout(
+                height=560,
+                margin=dict(l=10, r=10, t=20, b=10),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(255,255,255,0.02)",
+                coloraxis_showscale=False,
+                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+            )
+            st.plotly_chart(fig_fi, use_container_width=True)
+
             st.markdown(
-                """
-                - histórico recente normalmente domina a previsão  
-                - variações bruscas tendem a aparecer em lags e diferenças  
-                - promoções e fatores externos ajudam, mas raramente explicam tudo  
-                - interpretabilidade ajuda a justificar por que o modelo sobe ou reduz a expectativa de vendas
-                """
-            )
-    else:
-        st.info(
-            "Arquivo de feature importance não encontrado ou fora do padrão esperado. "
-            "Use um CSV com colunas como 'feature' e 'importance'."
-        )
-
-# =========================================================
-# TAB 7 - MODEL LEADERBOARD (MLflow)
-# =========================================================
-
-_CORES_MODELOS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#a855f7"]
-
-with tabs[6]:
-    caixa_secao(
-        "Model Leaderboard",
-        "Comparativo de performance dos modelos treinados — conectado diretamente ao MLflow.",
-    )
-
-    try:
-        if not _MLFLOW_AVAILABLE:
-            raise ImportError("mlflow não instalado")
-        mlflow.set_tracking_uri(mlflow_uri)
-        _client = MlflowClient()
-        _exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "forecast_estoque_walmart")
-        _exp = _client.get_experiment_by_name(_exp_name)
-
-        if _exp is None:
-            st.info(
-                f"Experimento '{_exp_name}' não encontrado no MLflow. "
-                "Execute o pipeline de treinamento primeiro."
+                """<div class="info-box"><b>Leitura para negócio</b><br>
+                Variáveis de histórico recente (lags) e estatísticas móveis dominam a previsão — o modelo aprende
+                padrões de venda recentes. Variáveis de calendário capturam sazonalidade. Features de contexto
+                (temperatura, CPI, markdowns) adicionam sensibilidade a eventos externos.</div>""",
+                unsafe_allow_html=True,
             )
         else:
-            _parent_runs = _client.search_runs(
-                experiment_ids=[_exp.experiment_id],
-                filter_string="tags.`mlflow.runName` = 'train_compare'",
-                order_by=["start_time DESC"],
-                max_results=20,
-            )
+            st.info("Feature importance não disponível para o modelo selecionado.")
 
-            if not _parent_runs:
-                st.info("Nenhum run de treinamento encontrado. Execute o pipeline primeiro.")
-            else:
-                _run_labels = {}
-                for _r in _parent_runs:
-                    _dt = datetime.datetime.fromtimestamp(_r.info.start_time / 1000).strftime("%Y-%m-%d %H:%M")
-                    _run_labels[f"{_dt}  —  run {_r.info.run_id[:8]}"] = _r.info.run_id
-
-                _sel_label = st.selectbox("Selecione o run de treinamento", list(_run_labels.keys()))
-                _sel_run_id = _run_labels[_sel_label]
-
-                _child_runs = _client.search_runs(
-                    experiment_ids=[_exp.experiment_id],
-                    filter_string=f"tags.`mlflow.parentRunId` = '{_sel_run_id}'",
-                    order_by=["metrics.rmse ASC"],
-                )
-
-                if _child_runs:
-                    _lb_rows = []
-                    for _run in _child_runs:
-                        _rmse = _run.data.metrics.get("rmse") or _run.data.metrics.get("RMSE")
-                        _mae = _run.data.metrics.get("mae") or _run.data.metrics.get("MAE")
-                        _smape = _run.data.metrics.get("smape") or _run.data.metrics.get("SMAPE")
-                        _lb_rows.append({
-                            "Modelo": _run.data.tags.get("mlflow.runName", _run.info.run_id[:8]),
-                            "RMSE": float(_rmse) if _rmse is not None else None,
-                            "MAE": float(_mae) if _mae is not None else None,
-                            "SMAPE (%)": float(_smape) if _smape is not None else None,
-                            "Treino (s)": round(_run.data.metrics.get("train_seconds", 0) or 0, 1),
-                        })
-
-                    _lb_df = pd.DataFrame(_lb_rows)
-                    # Se todas as métricas vieram None, usa o CSV como fallback
-                    if _lb_df["RMSE"].isna().all():
-                        raise ValueError("Métricas ausentes no MLflow — usando CSV fallback")
-                    _lb_df = _lb_df.sort_values("RMSE").reset_index(drop=True)
-
-                    st.markdown("### Comparativo de modelos")
-                    st.dataframe(_lb_df, use_container_width=True)
-
-                    _l1, _l2, _l3 = st.columns(3)
-
-                    with _l1:
-                        _fig_r = px.bar(
-                            _lb_df.sort_values("RMSE"),
-                            x="Modelo", y="RMSE",
-                            color="Modelo",
-                            color_discrete_sequence=_CORES_MODELOS,
-                            title="RMSE por modelo",
-                        )
-                        _fig_r.update_layout(
-                            height=320, showlegend=False,
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            plot_bgcolor="rgba(255,255,255,0.02)",
-                        )
-                        st.plotly_chart(_fig_r, use_container_width=True)
-
-                    with _l2:
-                        _fig_m = px.bar(
-                            _lb_df.sort_values("MAE"),
-                            x="Modelo", y="MAE",
-                            color="Modelo",
-                            color_discrete_sequence=_CORES_MODELOS,
-                            title="MAE por modelo",
-                        )
-                        _fig_m.update_layout(
-                            height=320, showlegend=False,
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            plot_bgcolor="rgba(255,255,255,0.02)",
-                        )
-                        st.plotly_chart(_fig_m, use_container_width=True)
-
-                    with _l3:
-                        _fig_s = px.bar(
-                            _lb_df.sort_values("SMAPE (%)"),
-                            x="Modelo", y="SMAPE (%)",
-                            color="Modelo",
-                            color_discrete_sequence=_CORES_MODELOS,
-                            title="SMAPE por modelo",
-                        )
-                        _fig_s.update_layout(
-                            height=320, showlegend=False,
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            plot_bgcolor="rgba(255,255,255,0.02)",
-                        )
-                        st.plotly_chart(_fig_s, use_container_width=True)
-
-                    _best = _lb_df.iloc[0]
-                    st.markdown(
-                        f"""
-                        <div class="good-box">
-                            <b>Melhor modelo: {_best['Modelo']}</b><br>
-                            RMSE = {fmt_number(_best.get('RMSE'))} &nbsp;|&nbsp;
-                            MAE = {fmt_number(_best.get('MAE'))} &nbsp;|&nbsp;
-                            SMAPE = {fmt_pct(_best.get('SMAPE (%)'))}
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-                    _parent_run_data = _client.get_run(_sel_run_id)
-                    st.markdown("### Metadados do run")
-                    _mc1, _mc2, _mc3, _mc4 = st.columns(4)
-                    _mc1.metric("Modelos treinados", _parent_run_data.data.params.get("models", "N/A"))
-                    _mc2.metric("Linhas de treino", _parent_run_data.data.params.get("train_rows", "N/A"))
-                    _mc3.metric("Features", _parent_run_data.data.params.get("n_features", "N/A"))
-                    _mc4.metric("Modo avaliação", _parent_run_data.data.params.get("eval_mode", "N/A"))
-                else:
-                    st.info("Runs filhos não encontrados para este experimento.")
-
-    except Exception as _e:
-        # Fallback: lê leaderboard.csv gerado no treinamento
-        _lb_csv = primeiro_arquivo_existente([
-            "artifacts/reports/leaderboard.csv",
-            "../artifacts/reports/leaderboard.csv",
-        ])
-        if _lb_csv:
-            _lb_fallback = pd.read_csv(_lb_csv)
-            _col_map = {"model": "Modelo", "rmse": "RMSE", "mae": "MAE", "smape": "SMAPE (%)"}
-            _lb_fallback = _lb_fallback.rename(columns={k: v for k, v in _col_map.items() if k in _lb_fallback.columns})
-            if "train_seconds" in _lb_fallback.columns:
-                _lb_fallback["Treino (s)"] = _lb_fallback["train_seconds"].round(1)
-            _display_cols = [c for c in ["Modelo", "RMSE", "MAE", "SMAPE (%)", "Treino (s)"] if c in _lb_fallback.columns]
-            _lb_fallback = _lb_fallback[_display_cols].sort_values("RMSE").reset_index(drop=True)
-
-            st.info("MLflow indisponível — exibindo leaderboard salvo no último treinamento.")
-            st.dataframe(_lb_fallback, use_container_width=True)
-
-            if not _lb_fallback.empty:
-                _best = _lb_fallback.iloc[0]
-                _l1, _l2, _l3 = st.columns(3)
-                with _l1:
-                    _fig_r = px.bar(_lb_fallback.sort_values("RMSE"), x="Modelo", y="RMSE",
-                                    color="Modelo", color_discrete_sequence=_CORES_MODELOS, title="RMSE por modelo")
-                    _fig_r.update_layout(height=320, showlegend=False,
-                                         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)")
-                    st.plotly_chart(_fig_r, use_container_width=True)
-                if "MAE" in _lb_fallback.columns:
-                    with _l2:
-                        _fig_m = px.bar(_lb_fallback.sort_values("MAE"), x="Modelo", y="MAE",
-                                        color="Modelo", color_discrete_sequence=_CORES_MODELOS, title="MAE por modelo")
-                        _fig_m.update_layout(height=320, showlegend=False,
-                                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)")
-                        st.plotly_chart(_fig_m, use_container_width=True)
-                if "SMAPE (%)" in _lb_fallback.columns:
-                    with _l3:
-                        _fig_s = px.bar(_lb_fallback.sort_values("SMAPE (%)"), x="Modelo", y="SMAPE (%)",
-                                        color="Modelo", color_discrete_sequence=_CORES_MODELOS, title="SMAPE por modelo")
-                        _fig_s.update_layout(height=320, showlegend=False,
-                                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)")
-                        st.plotly_chart(_fig_s, use_container_width=True)
-
-                st.markdown(
-                    f"""
-                    <div class="good-box">
-                        <b>Melhor modelo: {_best.get('Modelo', 'N/A')}</b><br>
-                        RMSE = {fmt_number(_best.get('RMSE'))} &nbsp;|&nbsp;
-                        MAE = {fmt_number(_best.get('MAE'))} &nbsp;|&nbsp;
-                        SMAPE = {fmt_pct(_best.get('SMAPE (%)'))}
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.warning("MLflow indisponível e leaderboard.csv não encontrado. Execute o pipeline de treinamento primeiro.")
-            st.caption(f"Erro MLflow: {_e}")
-
-
-# =========================================================
-# TAB 8 - MODEL INTELLIGENCE
-# =========================================================
-
-with tabs[7]:
-    caixa_secao(
-        "Model intelligence",
-        "Explica a estrutura do pipeline e como o modelo foi montado.",
-    )
-
-    col_a, col_b = st.columns(2)
-
-    best_model_name = best_meta.get("best_model", "N/A")
-    best_rmse = best_meta.get("best_rmse", None)
-
-    with col_a:
-        st.markdown("### Modelo selecionado")
-        st.metric("Melhor modelo", str(best_model_name))
-        st.metric("RMSE", fmt_number(best_rmse))
-
-        st.markdown(
-            """
-            <div class="info-box">
-                <b>Leitura</b><br>
-                O RMSE mede o desvio médio da previsão em relação ao valor real.
-                Quanto menor o valor, melhor a precisão do modelo.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with col_b:
-        st.markdown("### Estratégia de features")
-        total_features = len(feature_names)
-        st.metric("Quantidade de features", total_features if total_features else "N/A")
-
-        if preprocess_meta.get("target_col"):
-            st.metric("Target", str(preprocess_meta.get("target_col")))
-        elif best_meta.get("target_col"):
-            st.metric("Target", str(best_meta.get("target_col")))
-        else:
-            st.metric("Target", "Weekly_Sales")
-
-    if feature_names:
-        st.markdown("### Grupos de variáveis")
-
-        for grupo, feats in grupos_features.items():
-            if feats:
-                st.markdown(f"**{grupo}**")
-                st.write(feats)
-
-        st.markdown(
-            """
-            <div class="good-box">
-                <b>Resumo técnico</b><br>
-                O pipeline combina variáveis de calendário, histórico de vendas, estatísticas móveis,
-                contexto promocional e estrutura da loja. Essa combinação é adequada para forecasting de varejo,
-                porque captura sazonalidade, tendência, comportamento recente e contexto externo.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-        st.info("Não foi possível identificar a lista de features do pipeline.")
-
-# =========================================================
-# TAB 9 - MODEL MONITORING
-# =========================================================
-
-with tabs[8]:
-    caixa_secao(
-        "Model monitoring",
-        "Camada de monitoramento do comportamento do erro e metadados do modelo.",
-    )
-
-    m1, m2 = st.columns(2)
-
-    with m1:
-        st.markdown("### Drift do erro")
-        st.caption("Monitora se o erro muda de patamar ao longo do tempo.")
+    # --- Monitoramento ---
+    with m_tabs[2]:
+        st.markdown("### Drift do erro ao longo do tempo")
+        st.caption("Monitora se o erro aumenta ao longo dos meses — sinal de que o modelo precisa de retreinamento.")
 
         if "Date" in df_filtrado.columns and "erro_abs" in df_filtrado.columns:
             drift_df = df_filtrado.copy()
-            # Converte para primeiro dia do mês para evitar que Plotly interprete
-            # strings de período ("2012-09") como timestamps de fim de período
+            # Converte para primeiro dia do mês (evita Plotly renderizar como timestamp de fim de período)
             drift_df["mes_ref"] = drift_df["Date"].dt.to_period("M").dt.to_timestamp()
-
             drift_agg = (
                 drift_df.groupby("mes_ref", as_index=False)["erro_abs"]
                 .mean()
                 .sort_values("mes_ref")
             )
-
-            fig_drift = px.line(
-                drift_agg,
-                x="mes_ref",
-                y="erro_abs",
-                markers=True,
-            )
+            fig_drift = px.line(drift_agg, x="mes_ref", y="erro_abs", markers=True, color_discrete_sequence=["#3b82f6"])
             fig_drift.update_layout(
-                height=380,
+                height=360,
                 margin=dict(l=10, r=10, t=20, b=10),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(255,255,255,0.02)",
                 xaxis_title="Mês",
-                yaxis_title="Erro absoluto médio",
-                xaxis=dict(tickformat="%b %Y"),
+                yaxis_title="Erro absoluto médio (USD)",
+                xaxis=dict(tickformat="%b %Y", gridcolor="rgba(255,255,255,0.05)"),
+                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
             )
             st.plotly_chart(fig_drift, use_container_width=True)
 
-    with m2:
-        st.markdown("### Registros anômalos")
-        st.caption("Detecção simples de pontos com erro atípico.")
-
         if not anomalias.empty:
-            cols_show = [
-                c for c in [
-                    "Store_Label",
-                    "Dept_Label",
-                    "Date",
-                    "Weekly_Sales",
-                    "y_pred",
-                    "erro_abs",
-                    "z_erro",
-                ]
-                if c in anomalias.columns
-            ]
-            st.dataframe(
-                anomalias[cols_show].sort_values("erro_abs", ascending=False).head(20),
-                use_container_width=True,
+            st.markdown(f"**{len(anomalias)} registros anômalos** detectados (z-score ≥ 2.5)")
+            cols_show = [c for c in ["Store_Label", "Dept_Label", "Date", "Weekly_Sales", "y_pred", "erro_abs"] if c in anomalias.columns]
+            st.dataframe(anomalias[cols_show].sort_values("erro_abs", ascending=False).head(15), use_container_width=True)
+
+    # --- Pipeline ---
+    with m_tabs[3]:
+        st.markdown("### Configuração do pipeline")
+        st.caption("Parâmetros e features utilizados no treinamento do modelo.")
+
+        pa, pb = st.columns(2)
+        with pa:
+            st.markdown("**Modelo selecionado**")
+            st.metric("Melhor modelo", str(best_meta.get("best_model", "N/A")).upper())
+            st.metric("RMSE de validação", fmt_number(best_meta.get("best_rmse")))
+            st.metric("Fração de validação", fmt_pct(best_meta.get("valid_frac", 0) * 100, 0) if best_meta.get("valid_frac") else "N/A")
+
+        with pb:
+            st.markdown("**Features do modelo**")
+            feature_names = (
+                best_meta.get("features")
+                or preprocess_meta.get("feature_columns")
+                or []
             )
-        else:
-            st.info("Nenhuma anomalia relevante foi detectada no recorte atual.")
+            st.metric("Total de features", len(feature_names) if feature_names else "N/A")
+            target = preprocess_meta.get("target_col") or "Weekly_Sales"
+            st.metric("Target", target)
 
-    st.markdown("### Metadados do modelo")
-    st.caption("Informações úteis para auditoria e versionamento.")
+        if feature_names:
+            st.markdown("**Lista de features**")
+            # Agrupa por categoria
+            grupos = {
+                "Histórico (lags)": [f for f in feature_names if f.startswith("lag_") or f == "diff_1"],
+                "Estatísticas móveis": [f for f in feature_names if f.startswith("roll_")],
+                "Calendário": [f for f in feature_names if f in {"year", "month", "weekofyear", "dayofweek", "is_month_start", "is_month_end", "week_sin", "week_cos"}],
+                "Contexto externo": [f for f in feature_names if f in {"Temperature", "Fuel_Price", "MarkDown1", "MarkDown2", "MarkDown3", "MarkDown4", "MarkDown5", "CPI", "Unemployment", "IsHoliday"}],
+                "Estrutura da loja": [f for f in feature_names if f in {"Store", "Dept", "Size", "Type_A", "Type_B", "Type_C"}],
+            }
+            for grupo, feats in grupos.items():
+                if feats:
+                    with st.expander(f"{grupo} ({len(feats)})"):
+                        st.write(", ".join(feats))
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Nome do modelo", meta_yaml.get("name", "N/A"))
-    c2.metric("Versão", meta_yaml.get("version", "N/A"))
-    c3.metric("Status", meta_yaml.get("status", "N/A"))
-
-    st.markdown(
-        f"""
-        <div class="section-card">
-            <div><b>Run ID:</b> {meta_yaml.get("run_id", "N/A")}</div>
-            <div><b>Stage:</b> {meta_yaml.get("current_stage", "N/A")}</div>
-            <div><b>Source:</b> {meta_yaml.get("source", "N/A")}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# =========================================================
-# TAB 10 - DADOS
-# =========================================================
-
-with tabs[9]:
-    caixa_secao(
-        "Dados",
-        "Camada operacional para inspeção do recorte analisado.",
-    )
-
-    d1, d2, d3, d4 = st.columns(4)
-    d1.metric("Linhas", f"{len(df_filtrado):,}")
-    d2.metric("Lojas", resumo["lojas"])
-    d3.metric("Departamentos", resumo["departamentos"])
-    d4.metric("MAPE", fmt_pct(resumo["mape"]))
-
-    st.markdown("### Amostra dos dados")
-    cols = [
-        c for c in [
-            "Store_Label",
-            "Dept_Label",
-            "Date",
-            "Weekly_Sales",
-            "y_pred",
-            "erro",
-            "erro_abs",
-            "erro_pct",
-            "impacto_total_estimado",
-        ]
-        if c in df_filtrado.columns
-    ]
-
-    st.dataframe(
-        df_filtrado[cols].sort_values("Date"),
-        use_container_width=True,
-    )
-
-    st.markdown("### Estatísticas descritivas")
-    numericas = df_filtrado.select_dtypes(include="number")
-    if not numericas.empty:
-        st.dataframe(numericas.describe().T, use_container_width=True)
 
 # =========================================================
 # RODAPÉ
@@ -1788,10 +1161,9 @@ with tabs[9]:
 
 st.markdown("---")
 st.markdown(
-    """
-    <div class="footer-note">
-        Retail Forecast Intelligence • Dashboard orientado a negócio, risco operacional, interpretabilidade e monitoramento do modelo.
-    </div>
-    """,
+    """<div style="color:#a9b8d1; font-size:0.82rem; text-align:center;">
+    Retail Forecast Intelligence · Pipeline MLOps com LightGBM, XGBoost e Random Forest ·
+    Treinado com Rolling Time Series CV · Dados: Walmart Store Sales Forecasting (Kaggle)
+    </div>""",
     unsafe_allow_html=True,
 )
