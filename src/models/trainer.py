@@ -296,6 +296,7 @@ def train_compare_and_log(
         best_rmse: float = float("inf")
         best_model_uri: Optional[str] = None
         best_child_run_id: Optional[str] = None
+        predictions_store: Dict[str, np.ndarray] = {}
 
         # ---------- TREINA E LOGA CADA MODELO ----------
         for key in run_models:
@@ -327,6 +328,7 @@ def train_compare_and_log(
                 train_seconds = float(time.time() - t0)
 
                 preds = model_impl.predict(model, X_valid)
+                predictions_store[key] = preds
 
                 m_mae = float(mae(y_valid, preds))
                 m_rmse = float(rmse(y_valid, preds))
@@ -391,6 +393,18 @@ def train_compare_and_log(
                     best_child_run_id = child.info.run_id
 
         leaderboard = pd.DataFrame(results).sort_values("rmse").reset_index(drop=True)
+
+        # ---------- SALVA valid_predictions.parquet para o melhor modelo ----------
+        if best_key and best_key in predictions_store:
+            try:
+                valid_with_preds = valid_df.copy()
+                valid_with_preds["y_pred"] = predictions_store[best_key]
+                vp_path = os.path.join(artifacts_dir, "reports", "valid_predictions.parquet")
+                os.makedirs(os.path.dirname(vp_path), exist_ok=True)
+                valid_with_preds.to_parquet(vp_path, index=False)
+                mlflow.log_artifact(vp_path, artifact_path="reports")
+            except Exception as _e:
+                print(f"Aviso: não foi possível salvar valid_predictions.parquet: {_e}")
 
         # ---------- MÉTRICAS AGREGADAS NO RUN PAI ----------
         best_row = leaderboard.iloc[0]

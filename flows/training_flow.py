@@ -102,7 +102,7 @@ def train_holdout_task(dataset_path: str) -> Dict[str, Any]:
 def train_rolling_task(dataset_path: str) -> Dict[str, Any]:
     """
     Rolling Time Series Cross Validation.
-    Cria um run global no MLflow e dentro dele executa folds.
+    Seleciona o melhor modelo pela média do RMSE em todos os folds (não pelo melhor fold isolado).
     """
     logger = get_run_logger()
 
@@ -119,7 +119,7 @@ def train_rolling_task(dataset_path: str) -> Dict[str, Any]:
     splits = rolling_splits(df, "Date", horizon_days=horizon, n_folds=n_folds)
 
     fold_summaries = []
-    best_overall = None
+    all_fold_records: List[Dict[str, Any]] = []
 
     for train_df, valid_df, fold in splits:
 
@@ -140,18 +140,58 @@ def train_rolling_task(dataset_path: str) -> Dict[str, Any]:
 
         fold_summaries.append({
             "fold": fold.fold,
-            "best_model": res.best_key,
-            "best_model_uri": res.best_model_uri,
             "leaderboard": res.leaderboard.to_dict(orient="records"),
         })
 
-        best_row = res.leaderboard.iloc[0].to_dict()
-        best_row["fold"] = fold.fold
+        for row in res.leaderboard.to_dict(orient="records"):
+            all_fold_records.append({**row, "fold": fold.fold})
 
-        if best_overall is None or best_row["rmse"] < best_overall["rmse"]:
-            best_overall = best_row
+    # -------------------------------------------------------
+    # Seleção do melhor modelo pela MÉDIA do RMSE nos folds
+    # Evita escolher modelo que venceu apenas um fold fácil
+    # -------------------------------------------------------
+    df_all = pd.DataFrame(all_fold_records)
+    avg_lb = (
+        df_all.groupby("model", as_index=False)
+        .agg(mae=("mae", "mean"), rmse=("rmse", "mean"), smape=("smape", "mean"),
+             train_seconds=("train_seconds", "mean"))
+        .sort_values("rmse")
+        .reset_index(drop=True)
+    )
 
-    logger.info(f"Melhor modelo global: {best_overall}")
+    best_model_name = avg_lb.iloc[0]["model"]
+
+    # URI do modelo mais recente (fold com maior índice = validação mais recente)
+    recent_fold = max(fold_summaries, key=lambda s: s["fold"])
+    recent_lb = pd.DataFrame(recent_fold["leaderboard"])
+    best_row_recent = recent_lb[recent_lb["model"] == best_model_name]
+    if best_row_recent.empty:
+        best_row_recent = recent_lb.iloc[[0]]
+    best_model_uri = best_row_recent.iloc[0]["model_uri"]
+    best_run_id = best_row_recent.iloc[0]["run_id"]
+
+    # Anota run_id / model_uri do fold mais recente para cada modelo (para o dashboard)
+    uri_map = {r["model"]: r["model_uri"] for r in recent_fold["leaderboard"]}
+    run_map = {r["model"]: r["run_id"] for r in recent_fold["leaderboard"]}
+    avg_lb["model_uri"] = avg_lb["model"].map(uri_map)
+    avg_lb["run_id"] = avg_lb["model"].map(run_map)
+
+    # Grava leaderboard final com métricas médias (substitui o leaderboard por fold)
+    from src.io import ensure_dir
+    lb_path = "artifacts/reports/leaderboard.csv"
+    ensure_dir(os.path.dirname(lb_path))
+    avg_lb.to_csv(lb_path, index=False)
+    logger.info(f"Leaderboard médio salvo: {lb_path}")
+
+    best_overall = avg_lb.iloc[0].to_dict()
+    best_overall["model_uri"] = best_model_uri
+    best_overall["run_id"] = best_run_id
+
+    logger.info(
+        f"Melhor modelo (média de {n_folds} folds): {best_model_name} "
+        f"| RMSE={best_overall['rmse']:.1f} | MAE={best_overall['mae']:.1f} "
+        f"| SMAPE={best_overall['smape']:.2f}%"
+    )
 
     return {
         "horizon_days": horizon,
