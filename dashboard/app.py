@@ -300,8 +300,9 @@ def carregar_previsoes(caminho: str) -> pd.DataFrame:
     if {"Weekly_Sales", "y_pred"}.issubset(df.columns):
         df["erro"] = df["Weekly_Sales"] - df["y_pred"]
         df["erro_abs"] = df["erro"].abs()
-        denominador = df["Weekly_Sales"].replace(0, np.nan).abs()
-        df["erro_pct"] = (df["erro_abs"] / denominador) * 100
+        # SMAPE simétrico: 2*|e|/(|real|+|pred|) — mais estável que |e|/|real|
+        denominador = (df["Weekly_Sales"].abs() + df["y_pred"].abs()).replace(0, np.nan)
+        df["erro_pct"] = (2 * df["erro_abs"] / denominador) * 100
         df["superprevisao"] = np.where(df["y_pred"] > df["Weekly_Sales"], df["y_pred"] - df["Weekly_Sales"], 0.0)
         df["subprevisao"] = np.where(df["y_pred"] < df["Weekly_Sales"], df["Weekly_Sales"] - df["y_pred"], 0.0)
 
@@ -398,9 +399,9 @@ def _resolver(candidatos: list[str]) -> Optional[str]:
 
 
 caminho_previsoes_padrao = _resolver([
-    "reports/batch_predictions.parquet",
     "artifacts/reports/valid_predictions.parquet",
-]) or str(BASE_DIR / "reports/batch_predictions.parquet")
+    "reports/batch_predictions.parquet",
+]) or str(BASE_DIR / "artifacts/reports/valid_predictions.parquet")
 
 caminho_best_meta_padrao = _resolver([
     "artifacts/models/best_model_meta.json",
@@ -724,12 +725,29 @@ with tabs[1]:
 
     if {"Store_Label", "Dept_Label", "erro_abs"}.issubset(df_filtrado.columns):
         heatmap_df = df_filtrado.copy()
+        # Limita a top-20 lojas e top-20 departamentos por erro médio (evita heatmap ilegível)
+        top_stores = (
+            heatmap_df.groupby("Store_Label")["erro_abs"].mean()
+            .sort_values(ascending=False).head(20).index.tolist()
+        )
+        top_depts_hm = (
+            heatmap_df.groupby("Dept_Label")["erro_abs"].mean()
+            .sort_values(ascending=False).head(20).index.tolist()
+        )
+        heatmap_df = heatmap_df[
+            heatmap_df["Store_Label"].isin(top_stores) & heatmap_df["Dept_Label"].isin(top_depts_hm)
+        ]
+        # Ordena labels numericamente
+        def _sort_label(labels):
+            return sorted(labels, key=lambda s: int(s.split()[-1]) if s.split()[-1].isdigit() else 0)
+        top_stores = _sort_label(top_stores)
+        top_depts_hm = _sort_label(top_depts_hm)
         heatmap = heatmap_df.pivot_table(
             values="erro_abs",
             index="Store_Label",
             columns="Dept_Label",
             aggfunc="mean",
-        )
+        ).reindex(index=top_stores, columns=top_depts_hm)
         if not heatmap.empty:
             fig_heat = px.imshow(
                 heatmap,
@@ -737,14 +755,19 @@ with tabs[1]:
                 y=heatmap.index.tolist(),
                 color_continuous_scale="Blues",
                 aspect="auto",
-                labels={"color": "MAE médio", "x": "Departamento", "y": "Loja"},
+                labels={"color": "MAE médio (USD)", "x": "Departamento", "y": "Loja"},
+                text_auto=False,
             )
             fig_heat.update_layout(
-                height=max(400, len(heatmap.index) * 22),
-                margin=dict(l=10, r=10, t=20, b=10),
+                height=520,
+                margin=dict(l=10, r=10, t=30, b=10),
                 paper_bgcolor="rgba(0,0,0,0)",
+                xaxis=dict(tickangle=-45, tickfont=dict(size=11)),
+                yaxis=dict(tickfont=dict(size=11)),
+                coloraxis_colorbar=dict(title="MAE (USD)"),
             )
             st.plotly_chart(fig_heat, use_container_width=True)
+            st.caption("Mostrando top 20 lojas × top 20 departamentos por erro médio absoluto.")
         else:
             st.info("Dados insuficientes para gerar o heatmap com os filtros atuais.")
 
@@ -1091,23 +1114,30 @@ with tabs[4]:
 
         if "Date" in df_filtrado.columns and "erro_abs" in df_filtrado.columns:
             drift_df = df_filtrado.copy()
-            # Converte para primeiro dia do mês (evita Plotly renderizar como timestamp de fim de período)
-            drift_df["mes_ref"] = drift_df["Date"].dt.to_period("M").dt.to_timestamp()
+            # Usa semana quando há poucos meses distintos, mês quando há mais de 2
+            n_meses = drift_df["Date"].dt.to_period("M").nunique()
+            if n_meses <= 2:
+                drift_df["periodo_ref"] = drift_df["Date"].dt.to_period("W").dt.to_timestamp()
+                periodo_label = "Semana"
+            else:
+                drift_df["periodo_ref"] = drift_df["Date"].dt.to_period("M").dt.to_timestamp()
+                periodo_label = "Mês"
             drift_agg = (
-                drift_df.groupby("mes_ref", as_index=False)["erro_abs"]
+                drift_df.groupby("periodo_ref", as_index=False)["erro_abs"]
                 .mean()
-                .sort_values("mes_ref")
+                .sort_values("periodo_ref")
             )
-            fig_drift = px.line(drift_agg, x="mes_ref", y="erro_abs", markers=True, color_discrete_sequence=["#3b82f6"])
+            fig_drift = px.line(drift_agg, x="periodo_ref", y="erro_abs", markers=True, color_discrete_sequence=["#3b82f6"])
+            tick_fmt = "%d/%m/%Y" if n_meses <= 2 else "%b %Y"
             fig_drift.update_layout(
                 height=360,
                 margin=dict(l=10, r=10, t=20, b=10),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Mês",
+                xaxis_title=periodo_label,
                 yaxis_title="Erro absoluto médio (USD)",
-                xaxis=dict(tickformat="%b %Y", gridcolor="rgba(255,255,255,0.05)"),
-                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+                xaxis=dict(tickformat=tick_fmt, gridcolor="rgba(255,255,255,0.05)"),
+                yaxis=dict(gridcolor="rgba(255,255,255,0.05)", rangemode="tozero"),
             )
             st.plotly_chart(fig_drift, use_container_width=True)
 
