@@ -773,7 +773,7 @@ with tabs[1]:
 
     # Registros anômalos
     if not anomalias.empty:
-        with st.expander(f"⚠️ Ver {len(anomalias)} registros anômalos detectados"):
+        with st.expander(f"Ver {len(anomalias)} registros anômalos detectados"):
             cols_show = [c for c in ["Store_Label", "Dept_Label", "Date", "Weekly_Sales", "y_pred", "erro_abs"] if c in anomalias.columns]
             st.dataframe(
                 anomalias[cols_show].sort_values("erro_abs", ascending=False).head(30),
