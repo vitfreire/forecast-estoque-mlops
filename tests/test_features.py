@@ -83,10 +83,10 @@ class TestAddLagFeatures:
             assert f"roll_mean_{w}" in result.columns
             assert f"roll_std_{w}" in result.columns
 
-    def test_creates_diff_column(self):
+    def test_no_diff_leakage_column(self):
         df = make_sales_df().sort_values(["Store", "Dept", "Date"])
         result = add_lag_features(df, ["Store", "Dept"], "Weekly_Sales")
-        assert "diff_1" in result.columns
+        assert "diff_1" not in result.columns, "diff_1 é leakage direto do target — não deve existir"
 
     def test_first_row_of_group_has_null_lag1(self):
         df = make_sales_df().sort_values(["Store", "Dept", "Date"])
