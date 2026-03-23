@@ -26,6 +26,7 @@ artifacts/*
 !artifacts/reports/
 !artifacts/metadata/
 !artifacts/feature_importance/
+!artifacts/charts/
 artifacts/reports/*
 !artifacts/reports/leaderboard.csv
 !artifacts/reports/valid_predictions.parquet
@@ -33,6 +34,8 @@ artifacts/feature_importance/*
 !artifacts/feature_importance/lightgbm/
 !artifacts/feature_importance/xgboost/
 !artifacts/feature_importance/random_forest/
+artifacts/charts/*
+!artifacts/charts/*.png
 
 # Parquet em geral ignorado, exceto previsões do dashboard
 *.parquet
