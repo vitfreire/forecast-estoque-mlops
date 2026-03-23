@@ -93,9 +93,6 @@ def add_lag_features(
         d[f"roll_mean_{w}"] = shifted.rolling(window=w, min_periods=1).mean()
         d[f"roll_std_{w}"] = shifted.rolling(window=w, min_periods=1).std()
 
-    # Delta semanal
-    d["diff_1"] = d[target_col] - g.shift(1)
-
     # limpar infinitos
     d = d.replace([np.inf, -np.inf], np.nan)
 
