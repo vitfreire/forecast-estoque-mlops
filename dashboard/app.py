@@ -417,6 +417,13 @@ caminho_leaderboard_padrao = _resolver([
     "artifacts/reports/leaderboard.csv",
 ])
 
+_charts_dir = BASE_DIR / "artifacts" / "charts"
+
+def _chart(nome: str) -> Optional[str]:
+    """Retorna o caminho de um PNG pré-gerado, ou None se não existir."""
+    p = _charts_dir / nome
+    return str(p) if p.exists() else None
+
 _artif_fi_dir = BASE_DIR / "artifacts" / "feature_importance"
 _modelos_fi = sorted([
     d for d in os.listdir(_artif_fi_dir)
@@ -613,24 +620,22 @@ with tabs[0]:
 
     st.markdown("---")
 
-    # Gráfico principal: Receita real vs prevista
+    # Gráfico principal: histórico de receita (imagem pré-gerada com 3 anos de dados)
     col_chart, col_insight = st.columns([2, 1])
 
     with col_chart:
-        st.markdown("### Receita real vs prevista")
-        st.caption("Acompanha se o modelo segue a trajetória da demanda ao longo do tempo.")
-        if not ts.empty:
+        st.markdown("### Receita semanal histórica (2010–2012)")
+        st.caption("Série completa de 143 semanas — 45 lojas, padrão sazonal com pico em Black Friday e Natal.")
+        _img_hist = _chart("receita_historica.png")
+        if _img_hist:
+            st.image(_img_hist, use_column_width=True)
+        elif not ts.empty:
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=ts["Date"], y=ts["Weekly_Sales"], mode="lines", name="Real", line=dict(width=3, color="#3b82f6")))
             fig.add_trace(go.Scatter(x=ts["Date"], y=ts["y_pred"], mode="lines", name="Previsto", line=dict(width=2, dash="dash", color="#10b981")))
             fig.update_layout(
-                height=400,
-                margin=dict(l=10, r=10, t=25, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Data",
-                yaxis_title="Vendas (USD)",
-                legend_title="Série",
+                height=400, margin=dict(l=10, r=10, t=25, b=10),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)",
                 xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
                 yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
             )
@@ -719,11 +724,14 @@ with tabs[1]:
                 )
                 st.plotly_chart(fig_depts, use_container_width=True)
 
-    # Heatmap
+    # Heatmap — usa imagem pré-gerada (mais confiável no Streamlit Cloud)
     st.markdown("### Mapa de calor — erro médio por loja × departamento")
-    st.caption("Blocos mais escuros indicam combinações loja/departamento com maior erro de previsão. Use para priorizar onde ajustar o modelo ou reforçar o processo de reposição.")
+    st.caption("Blocos mais escuros indicam combinações loja/departamento com maior erro de previsão. Top 20 lojas × 20 departamentos por MAE.")
 
-    if {"Store_Label", "Dept_Label", "erro_abs"}.issubset(df_filtrado.columns):
+    _img_hm = _chart("heatmap_erro.png")
+    if _img_hm:
+        st.image(_img_hm, use_column_width=True)
+    elif {"Store_Label", "Dept_Label", "erro_abs"}.issubset(df_filtrado.columns):
         heatmap_df = df_filtrado.copy()
         # Limita a top-20 lojas e top-20 departamentos por erro médio (evita heatmap ilegível)
         top_stores = (
@@ -794,92 +802,53 @@ with tabs[2]:
     g1, g2 = st.columns(2)
 
     with g1:
-        st.markdown("### Erro absoluto ao longo do tempo")
-        st.caption("Identifica períodos em que o modelo falha mais — picos podem indicar sazonalidade não capturada.")
-        if not ts.empty and "erro_abs" in ts.columns:
-            fig_erro_tempo = px.area(
-                ts, x="Date", y="erro_abs",
-                color_discrete_sequence=["#f59e0b"],
-            )
-            fig_erro_tempo.update_layout(
-                height=360,
-                margin=dict(l=10, r=10, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Data",
-                yaxis_title="Erro absoluto médio (USD)",
-                xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-                showlegend=False,
-            )
-            st.plotly_chart(fig_erro_tempo, use_container_width=True)
+        st.markdown("### Sazonalidade semanal (dataset completo)")
+        st.caption("Picos na semana 47-48 (Black Friday/Thanksgiving) e 51-52 (Natal) — padrão dos 3 anos de histórico.")
+        _img_saz = _chart("sazonalidade_semanal.png")
+        if _img_saz:
+            st.image(_img_saz, use_column_width=True)
 
     with g2:
-        st.markdown("### Distribuição do erro")
+        st.markdown("### Distribuição do erro de previsão")
         st.caption("Erro centrado em zero indica modelo equilibrado. Assimetria indica viés sistemático.")
-        if "erro" in df_filtrado.columns:
-            fig_hist_erro = px.histogram(
-                df_filtrado, x="erro", nbins=50,
-                color_discrete_sequence=["#3b82f6"],
-            )
+        _img_err = _chart("distribuicao_erro.png")
+        if _img_err:
+            st.image(_img_err, use_column_width=True)
+        elif "erro" in df_filtrado.columns:
+            fig_hist_erro = px.histogram(df_filtrado, x="erro", nbins=50, color_discrete_sequence=["#3b82f6"])
             fig_hist_erro.add_vline(x=0, line_dash="dash", line_color="rgba(255,255,255,0.4)")
-            fig_hist_erro.update_layout(
-                height=360,
-                margin=dict(l=10, r=10, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Erro (Real − Previsto)",
-                yaxis_title="Frequência",
-                xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-            )
+            fig_hist_erro.update_layout(height=360, margin=dict(l=10,r=10,t=20,b=10),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)",
+                xaxis_title="Erro (Real − Previsto)", yaxis_title="Frequência")
             st.plotly_chart(fig_hist_erro, use_container_width=True)
 
     g3, g4 = st.columns(2)
 
     with g3:
-        st.markdown("### Distribuição de vendas reais")
-        st.caption("Mostra a dispersão dos valores de venda no recorte atual.")
-        if "Weekly_Sales" in df_filtrado.columns:
-            fig_hist_vendas = px.histogram(
-                df_filtrado, x="Weekly_Sales", nbins=45,
-                color_discrete_sequence=["#10b981"],
-            )
-            fig_hist_vendas.update_layout(
-                height=340,
-                margin=dict(l=10, r=10, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Vendas semanais (USD)",
-                yaxis_title="Frequência",
-                xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-            )
-            st.plotly_chart(fig_hist_vendas, use_container_width=True)
+        st.markdown("### Vendas por tipo de loja")
+        st.caption("Lojas tipo A (grandes) vendem em média 3× mais que tipo C — justifica o modelo por segmento.")
+        _img_tipo = _chart("vendas_por_tipo.png")
+        if _img_tipo:
+            st.image(_img_tipo, use_column_width=True)
 
     with g4:
         st.markdown("### Real vs Previsto por registro")
-        st.caption("Pontos próximos da diagonal indicam boa previsão. Desvios indicam onde o modelo falha.")
-        if {"Weekly_Sales", "y_pred"}.issubset(df_filtrado.columns):
+        st.caption("Pontos próximos da diagonal indicam boa previsão. Cor indica magnitude do erro.")
+        _img_rvp = _chart("real_vs_previsto.png")
+        if _img_rvp:
+            st.image(_img_rvp, use_column_width=True)
+        elif {"Weekly_Sales", "y_pred"}.issubset(df_filtrado.columns):
             sample = df_filtrado.sample(min(2000, len(df_filtrado)), random_state=42)
-            fig_scatter = px.scatter(
-                sample, x="Weekly_Sales", y="y_pred",
+            fig_scatter = px.scatter(sample, x="Weekly_Sales", y="y_pred",
                 color="erro_abs" if "erro_abs" in sample.columns else None,
-                color_continuous_scale="RdYlGn_r",
-                opacity=0.5,
-                labels={"Weekly_Sales": "Real (USD)", "y_pred": "Previsto (USD)", "erro_abs": "Erro abs"},
-            )
-            # Linha diagonal perfeita
+                color_continuous_scale="RdYlGn_r", opacity=0.5,
+                labels={"Weekly_Sales": "Real (USD)", "y_pred": "Previsto (USD)", "erro_abs": "Erro abs"})
             max_val = max(sample["Weekly_Sales"].max(), sample["y_pred"].max())
             fig_scatter.add_shape(type="line", x0=0, y0=0, x1=max_val, y1=max_val,
                                   line=dict(color="rgba(255,255,255,0.25)", dash="dash"))
-            fig_scatter.update_layout(
-                height=340,
-                margin=dict(l=10, r=10, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                coloraxis_showscale=False,
-            )
+            fig_scatter.update_layout(height=340, margin=dict(l=10,r=10,t=20,b=10),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)",
+                coloraxis_showscale=False)
             st.plotly_chart(fig_scatter, use_container_width=True)
 
 
@@ -928,23 +897,15 @@ with tabs[3]:
             st.plotly_chart(fig_pie, use_container_width=True)
 
     with fi2:
-        st.markdown("### Impacto acumulado no tempo")
-        st.caption("Semanas com maior pico de impacto indicam onde o modelo precisa de atenção.")
-        if not ts.empty and "impacto_total" in ts.columns:
-            fig_impact_time = px.bar(
-                ts, x="Date", y="impacto_total",
-                color_discrete_sequence=["#ef4444"],
-            )
-            fig_impact_time.update_layout(
-                height=380,
-                margin=dict(l=10, r=10, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                xaxis_title="Data",
-                yaxis_title="Impacto estimado (USD)",
-                xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-            )
+        st.markdown("### Top 15 lojas por impacto financeiro estimado")
+        st.caption("Prioridade de ação: lojas onde reduzir erro tem maior retorno financeiro.")
+        _img_imp = _chart("impacto_por_loja.png")
+        if _img_imp:
+            st.image(_img_imp, use_column_width=True)
+        elif not ts.empty and "impacto_total" in ts.columns:
+            fig_impact_time = px.bar(ts, x="Date", y="impacto_total", color_discrete_sequence=["#ef4444"])
+            fig_impact_time.update_layout(height=380, margin=dict(l=10,r=10,t=20,b=10),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)")
             st.plotly_chart(fig_impact_time, use_container_width=True)
 
     # Tabela de maiores impactos
@@ -983,53 +944,14 @@ with tabs[4]:
     # --- Leaderboard ---
     with m_tabs[0]:
         st.markdown("### Comparativo de modelos")
-        st.caption("Modelo vencedor por menor RMSE — treinado com rolling time series CV (sem data leakage).")
+        st.caption("Modelo vencedor por menor RMSE médio — treinado com Rolling Time Series CV (3 folds).")
 
         _CORES = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#a855f7"]
 
         _lb_df = pd.DataFrame()
 
-        # Tenta MLflow
-        if _MLFLOW_AVAILABLE:
-            try:
-                mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", f"file:{BASE_DIR}/mlruns"))
-                _client = MlflowClient()
-                _exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "forecast_estoque_walmart")
-                _exp = _client.get_experiment_by_name(_exp_name)
-                if _exp:
-                    _parent_runs = _client.search_runs(
-                        experiment_ids=[_exp.experiment_id],
-                        filter_string="tags.`mlflow.runName` = 'train_compare'",
-                        order_by=["start_time DESC"],
-                        max_results=5,
-                    )
-                    if _parent_runs:
-                        _child_runs = _client.search_runs(
-                            experiment_ids=[_exp.experiment_id],
-                            filter_string=f"tags.`mlflow.parentRunId` = '{_parent_runs[0].info.run_id}'",
-                        )
-                        if _child_runs:
-                            _rows = []
-                            for _r in _child_runs:
-                                _rmse = _r.data.metrics.get("rmse") or _r.data.metrics.get("RMSE")
-                                _mae = _r.data.metrics.get("mae") or _r.data.metrics.get("MAE")
-                                _smape = _r.data.metrics.get("smape") or _r.data.metrics.get("SMAPE")
-                                _rows.append({
-                                    "Modelo": _r.data.tags.get("mlflow.runName", _r.info.run_id[:8]),
-                                    "RMSE": float(_rmse) if _rmse else None,
-                                    "MAE": float(_mae) if _mae else None,
-                                    "SMAPE (%)": float(_smape) if _smape else None,
-                                })
-                            _lb_df = pd.DataFrame(_rows)
-                            if _lb_df["RMSE"].isna().all():
-                                _lb_df = pd.DataFrame()
-                            else:
-                                _lb_df = _lb_df.sort_values("RMSE").reset_index(drop=True)
-            except Exception:
-                _lb_df = pd.DataFrame()
-
-        # Fallback: CSV
-        if _lb_df.empty and caminho_leaderboard_padrao:
+        # 1) CSV primeiro — funciona no Streamlit Cloud sem MLflow server
+        if caminho_leaderboard_padrao and os.path.exists(caminho_leaderboard_padrao):
             try:
                 _lb_df = pd.read_csv(caminho_leaderboard_padrao)
                 _col_map = {"model": "Modelo", "rmse": "RMSE", "mae": "MAE", "smape": "SMAPE (%)"}
@@ -1039,62 +961,118 @@ with tabs[4]:
             except Exception:
                 _lb_df = pd.DataFrame()
 
+        # 2) Fallback MLflow — só funciona com mlruns/ local
+        if _lb_df.empty and _MLFLOW_AVAILABLE:
+            try:
+                _mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "")
+                if _mlflow_uri and not _mlflow_uri.startswith("file:"):
+                    # só tenta se for servidor remoto (não file store local)
+                    mlflow.set_tracking_uri(_mlflow_uri)
+                    _client = MlflowClient()
+                    _exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "forecast_estoque_walmart")
+                    _exp = _client.get_experiment_by_name(_exp_name)
+                    if _exp:
+                        _parent_runs = _client.search_runs(
+                            experiment_ids=[_exp.experiment_id],
+                            filter_string="tags.`mlflow.runName` = 'train_compare'",
+                            order_by=["start_time DESC"],
+                            max_results=1,
+                        )
+                        if _parent_runs:
+                            _child_runs = _client.search_runs(
+                                experiment_ids=[_exp.experiment_id],
+                                filter_string=f"tags.`mlflow.parentRunId` = '{_parent_runs[0].info.run_id}'",
+                            )
+                            _rows = []
+                            for _r in _child_runs:
+                                _rmse  = _r.data.metrics.get("rmse")  or _r.data.metrics.get("RMSE")
+                                _mae   = _r.data.metrics.get("mae")   or _r.data.metrics.get("MAE")
+                                _smape = _r.data.metrics.get("smape") or _r.data.metrics.get("SMAPE")
+                                _rows.append({
+                                    "Modelo":     _r.data.tags.get("mlflow.runName", _r.info.run_id[:8]),
+                                    "RMSE":       float(_rmse)  if _rmse  else None,
+                                    "MAE":        float(_mae)   if _mae   else None,
+                                    "SMAPE (%)":  float(_smape) if _smape else None,
+                                })
+                            if _rows:
+                                _lb_df = pd.DataFrame(_rows).sort_values("RMSE").reset_index(drop=True)
+            except Exception:
+                _lb_df = pd.DataFrame()
+
         if not _lb_df.empty:
+            # Cards de métricas por modelo
+            _model_cols = st.columns(len(_lb_df))
+            _medals = ["🥇", "🥈", "🥉"]
+            for _idx, (_mc, (_, _row)) in enumerate(zip(_model_cols, _lb_df.iterrows())):
+                _medal = _medals[_idx] if _idx < len(_medals) else ""
+                _card_class = "alert-green" if _idx == 0 else "section-card"
+                _mc.markdown(
+                    f"""<div class="{_card_class}" style="text-align:center; padding:16px;">
+                    <div style="font-size:1.4rem;">{_medal}</div>
+                    <div style="font-size:1rem; font-weight:700; margin:4px 0;">{str(_row.get('Modelo','N/A')).upper()}</div>
+                    <div style="font-size:0.82rem; color:#b7c7df;">RMSE: {fmt_number(_row.get('RMSE'))}</div>
+                    <div style="font-size:0.82rem; color:#b7c7df;">MAE: {fmt_number(_row.get('MAE'))}</div>
+                    <div style="font-size:0.82rem; color:#b7c7df;">SMAPE: {fmt_pct(_row.get('SMAPE (%)'))}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+
+            st.markdown("")
+
+            # Tabela completa
             st.dataframe(_lb_df, use_container_width=True)
 
-            _l1, _l2, _l3 = st.columns(3)
-            for _col_widget, _metric, _title in [(_l1, "RMSE", "RMSE por modelo"), (_l2, "MAE", "MAE por modelo"), (_l3, "SMAPE (%)", "SMAPE por modelo")]:
-                if _metric in _lb_df.columns and _lb_df[_metric].notna().any():
-                    with _col_widget:
-                        _fig = px.bar(
-                            _lb_df.dropna(subset=[_metric]).sort_values(_metric),
-                            x="Modelo", y=_metric,
-                            color="Modelo",
-                            color_discrete_sequence=_CORES,
-                            title=_title,
-                        )
-                        _fig.update_layout(
-                            height=320, showlegend=False,
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            plot_bgcolor="rgba(255,255,255,0.02)",
-                            yaxis=dict(rangemode="tozero", gridcolor="rgba(255,255,255,0.05)"),
-                        )
-                        st.plotly_chart(_fig, use_container_width=True)
+            # Gráfico comparativo (imagem pré-gerada ou Plotly)
+            _img_lb = _chart("leaderboard.png")
+            if _img_lb:
+                st.image(_img_lb, use_column_width=True)
+            else:
+                _l1, _l2, _l3 = st.columns(3)
+                for _col_widget, _metric, _title in [(_l1, "RMSE", "RMSE (USD)"), (_l2, "MAE", "MAE (USD)"), (_l3, "SMAPE (%)", "SMAPE (%)")]:
+                    if _metric in _lb_df.columns and _lb_df[_metric].notna().any():
+                        with _col_widget:
+                            _fig = px.bar(_lb_df.dropna(subset=[_metric]).sort_values(_metric),
+                                x="Modelo", y=_metric, color="Modelo",
+                                color_discrete_sequence=_CORES, title=_title)
+                            _fig.update_layout(height=300, showlegend=False,
+                                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)",
+                                yaxis=dict(rangemode="tozero"))
+                            st.plotly_chart(_fig, use_container_width=True)
 
-            _best = _lb_df.iloc[0]
             st.markdown(
-                f"""<div class="alert-green"><b>Melhor modelo: {_best.get('Modelo', 'N/A')}</b><br>
-                RMSE = {fmt_number(_best.get('RMSE'))} &nbsp;|&nbsp;
-                MAE = {fmt_number(_best.get('MAE'))} &nbsp;|&nbsp;
-                SMAPE = {fmt_pct(_best.get('SMAPE (%)'))}
-                </div>""",
+                """<div class="info-box"><b>Como interpretar</b><br>
+                Métricas são <b>médias dos 3 folds</b> do Rolling Time Series CV — mais honestas do que pegar o melhor fold isolado.
+                SMAPE abaixo de 10% é considerado excelente para forecasting de varejo (benchmark: 10–30%).</div>""",
                 unsafe_allow_html=True,
             )
         else:
-            st.info("Leaderboard não disponível. Execute o pipeline de treinamento para gerar os resultados.")
+            st.warning("Leaderboard não encontrado em `artifacts/reports/leaderboard.csv`. Execute o pipeline de treinamento.")
 
     # --- Feature Importance ---
     with m_tabs[1]:
         st.markdown("### Variáveis mais importantes para a previsão")
         st.caption("Mostra quais features o modelo mais usa para gerar as previsões.")
 
-        if not df_importancia.empty:
+        # Tenta PNG pré-gerado do modelo selecionado; fallback para Plotly dinâmico
+        _fi_png = None
+        if _modelo_fi_sel:
+            _fi_png_path = _artif_fi_dir / _modelo_fi_sel / "feature_importance.png"
+            if _fi_png_path.exists():
+                _fi_png = str(_fi_png_path)
+
+        if _fi_png:
+            st.image(_fi_png, use_column_width=True)
+        elif not df_importancia.empty:
             top_feats = df_importancia.head(20)
             fig_fi = px.bar(
                 top_feats.sort_values("importance", ascending=True),
                 x="importance", y="feature", orientation="h",
-                color="importance",
-                color_continuous_scale="Blues",
+                color="importance", color_continuous_scale="Blues",
                 labels={"importance": "Importância", "feature": "Variável"},
             )
-            fig_fi.update_layout(
-                height=560,
-                margin=dict(l=10, r=10, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(255,255,255,0.02)",
-                coloraxis_showscale=False,
-                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-            )
+            fig_fi.update_layout(height=560, margin=dict(l=10,r=10,t=20,b=10),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.02)",
+                coloraxis_showscale=False)
             st.plotly_chart(fig_fi, use_container_width=True)
 
             st.markdown(
